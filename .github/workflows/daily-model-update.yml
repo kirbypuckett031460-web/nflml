@@ -1,0 +1,71 @@
+name: Daily NFL model refresh
+
+on:
+  schedule:
+    # Noon ET is 16:00 UTC during DST and 17:00 UTC during standard time.
+    - cron: "0 16,17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-model:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine noon ET window
+        id: noon_check
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+
+          now_utc = datetime.now(timezone.utc)
+          now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
+          should_run = now_et.hour == 12 and now_et.minute == 0
+
+          print(f"UTC time: {now_utc.isoformat()}")
+          print(f"ET time: {now_et.isoformat()}")
+          print(f"should_run: {should_run}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+            fh.write(f"should_run={'true' if should_run else 'false'}\n")
+          PY
+
+      - name: Skip non-noon scheduled run
+        if: github.event_name == 'schedule' && steps.noon_check.outputs.should_run != 'true'
+        run: echo "Skipping this scheduled slot because it is not noon ET."
+
+      - name: Setup Python
+        if: github.event_name == 'workflow_dispatch' || steps.noon_check.outputs.should_run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: github.event_name == 'workflow_dispatch' || steps.noon_check.outputs.should_run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Run model pipeline
+        if: github.event_name == 'workflow_dispatch' || steps.noon_check.outputs.should_run == 'true'
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python train_model.py
+
+      - name: Commit and push published outputs
+        if: github.event_name == 'workflow_dispatch' || steps.noon_check.outputs.should_run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add published
+          if git diff --cached --quiet; then
+            echo "No published output changes."
+          else
+            git commit -m "ci: refresh public nfl moneyline outputs"
+            git push
+          fi

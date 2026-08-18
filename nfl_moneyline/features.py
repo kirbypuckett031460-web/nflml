@@ -26,6 +26,12 @@ FEATURE_COLUMNS = [
     "away_recent_points_for",
 ]
 
+DEFAULT_TEAM_FEATURES = {
+    "recent_win_rate": 0.5,
+    "recent_point_diff": 0.0,
+    "recent_points_for": 21.0,
+}
+
 
 @dataclass
 class TeamRollingState:
@@ -46,6 +52,17 @@ class TeamRollingState:
         self.wins.append(win)
         self.point_diff.append(points_for - points_against)
         self.points_for.append(points_for)
+
+    def as_snapshot(self) -> dict[str, float]:
+        return {
+            "recent_win_rate": float(np.mean(self.wins)) if self.wins else DEFAULT_TEAM_FEATURES["recent_win_rate"],
+            "recent_point_diff": float(np.mean(self.point_diff))
+            if self.point_diff
+            else DEFAULT_TEAM_FEATURES["recent_point_diff"],
+            "recent_points_for": float(np.mean(self.points_for))
+            if self.points_for
+            else DEFAULT_TEAM_FEATURES["recent_points_for"],
+        }
 
 
 def build_feature_frame(games_df: pd.DataFrame) -> pd.DataFrame:
@@ -130,3 +147,107 @@ def build_prediction_frame(feature_df: pd.DataFrame) -> pd.DataFrame:
         & feature_df["away_moneyline"].notna()
     ].copy()
     return pred.sort_values(["gameday", "game_id"]).reset_index(drop=True)
+
+
+def build_team_form_snapshot(
+    games_df: pd.DataFrame,
+) -> tuple[dict[str, dict[str, float]], dict[str, pd.Timestamp]]:
+    """Build latest rolling form + last played date for each team."""
+    team_state: dict[str, TeamRollingState] = defaultdict(TeamRollingState)
+    last_game_date: dict[str, pd.Timestamp] = {}
+
+    for game in games_df.itertuples(index=False):
+        if game.game_type not in {"REG", "POST"}:
+            continue
+        if pd.isna(game.gameday) or pd.isna(game.home_team) or pd.isna(game.away_team):
+            continue
+        if pd.isna(game.home_score) or pd.isna(game.away_score):
+            continue
+
+        home_win = int(float(game.home_score) > float(game.away_score))
+        away_win = 1 - home_win
+
+        team_state[game.home_team].update(
+            win=home_win,
+            points_for=float(game.home_score),
+            points_against=float(game.away_score),
+        )
+        team_state[game.away_team].update(
+            win=away_win,
+            points_for=float(game.away_score),
+            points_against=float(game.home_score),
+        )
+        last_game_date[game.home_team] = pd.Timestamp(game.gameday)
+        last_game_date[game.away_team] = pd.Timestamp(game.gameday)
+
+    snapshot = {team: state.as_snapshot() for team, state in team_state.items()}
+    return snapshot, last_game_date
+
+
+def build_external_prediction_frame(
+    odds_frame: pd.DataFrame,
+    team_snapshot: dict[str, dict[str, float]],
+    last_game_date: dict[str, pd.Timestamp],
+) -> pd.DataFrame:
+    """Build prediction features from external odds feed rows."""
+    if odds_frame.empty:
+        return pd.DataFrame()
+
+    rows: list[dict] = []
+    for game in odds_frame.itertuples(index=False):
+        if pd.isna(game.home_moneyline) or pd.isna(game.away_moneyline):
+            continue
+
+        home_prob, away_prob = no_vig_probabilities(game.home_moneyline, game.away_moneyline)
+        if np.isnan(home_prob) or np.isnan(away_prob):
+            continue
+
+        home_form = team_snapshot.get(game.home_team, DEFAULT_TEAM_FEATURES)
+        away_form = team_snapshot.get(game.away_team, DEFAULT_TEAM_FEATURES)
+
+        home_last = last_game_date.get(game.home_team)
+        away_last = last_game_date.get(game.away_team)
+        rest_diff = np.nan
+        if home_last is not None and away_last is not None and pd.notna(game.gameday):
+            kickoff = pd.Timestamp(game.gameday)
+            if kickoff.tzinfo is not None:
+                kickoff = kickoff.tz_convert("UTC").tz_localize(None)
+            if home_last.tzinfo is not None:
+                home_last = home_last.tz_convert("UTC").tz_localize(None)
+            if away_last.tzinfo is not None:
+                away_last = away_last.tz_convert("UTC").tz_localize(None)
+            home_rest = (kickoff - home_last).days
+            away_rest = (kickoff - away_last).days
+            rest_diff = float(home_rest - away_rest)
+
+        row = {
+            "game_id": game.game_id,
+            "gameday": game.gameday,
+            "season": game.season,
+            "week": game.week,
+            "home_team": game.home_team,
+            "away_team": game.away_team,
+            "home_team_name": getattr(game, "home_team_name", game.home_team),
+            "away_team_name": getattr(game, "away_team_name", game.away_team),
+            "home_moneyline": float(game.home_moneyline),
+            "away_moneyline": float(game.away_moneyline),
+            "market_home_prob": home_prob,
+            "market_away_prob": away_prob,
+            "home_spread_line": game.home_spread_line if pd.notna(game.home_spread_line) else np.nan,
+            "rest_diff": rest_diff,
+            "home_recent_win_rate": float(home_form["recent_win_rate"]),
+            "home_recent_point_diff": float(home_form["recent_point_diff"]),
+            "home_recent_points_for": float(home_form["recent_points_for"]),
+            "away_recent_win_rate": float(away_form["recent_win_rate"]),
+            "away_recent_point_diff": float(away_form["recent_point_diff"]),
+            "away_recent_points_for": float(away_form["recent_points_for"]),
+            "home_win": np.nan,
+        }
+        row["recent_win_rate_diff"] = row["home_recent_win_rate"] - row["away_recent_win_rate"]
+        row["recent_point_diff_diff"] = row["home_recent_point_diff"] - row["away_recent_point_diff"]
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows).sort_values(["gameday", "game_id"]).reset_index(drop=True)
