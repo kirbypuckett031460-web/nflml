@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -17,14 +18,54 @@ st.set_page_config(page_title="NFL Moneyline Picks", layout="wide")
 st.markdown(
     """
 <style>
-.block-container {padding-top: 1.4rem; padding-bottom: 2.5rem;}
-.title-row {display:flex; align-items:center; gap:1rem; margin-bottom: 0.4rem;}
-.title-row h1 {margin:0; font-size:2.1rem;}
-.muted {color:#AAB2C5; font-size:0.9rem;}
+.block-container {padding-top: 1.2rem; padding-bottom: 2.5rem;}
+.title-row {display:flex; align-items:center; gap:1rem; margin-bottom: 0.2rem;}
+.title-row h1 {margin:0; font-size:2.2rem; letter-spacing:0.2px;}
+.muted {color:#AAB2C5; font-size:0.9rem; margin-bottom:0.5rem;}
+.stButton > button {
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  font-weight: 600;
+}
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+TEAM_COLORS = {
+    "ARI": "#97233F",
+    "ATL": "#A71930",
+    "BAL": "#241773",
+    "BUF": "#00338D",
+    "CAR": "#0085CA",
+    "CHI": "#0B162A",
+    "CIN": "#FB4F14",
+    "CLE": "#311D00",
+    "DAL": "#003594",
+    "DEN": "#FB4F14",
+    "DET": "#0076B6",
+    "GB": "#203731",
+    "HOU": "#03202F",
+    "IND": "#002C5F",
+    "JAX": "#006778",
+    "KC": "#E31837",
+    "LA": "#003594",
+    "LAC": "#0080C6",
+    "LV": "#000000",
+    "MIA": "#008E97",
+    "MIN": "#4F2683",
+    "NE": "#002244",
+    "NO": "#D3BC8D",
+    "NYG": "#0B2265",
+    "NYJ": "#125740",
+    "PHI": "#004C54",
+    "PIT": "#FFB612",
+    "SEA": "#002244",
+    "SF": "#AA0000",
+    "TB": "#D50A0A",
+    "TEN": "#0C2340",
+    "WAS": "#5A1414",
+}
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -56,6 +97,12 @@ def odds_str(value: float | int) -> str:
     return f"+{number}" if number > 0 else str(number)
 
 
+def edge_to_confidence(edge_pct: float) -> float:
+    positive_edge = max(float(edge_pct), 0.0)
+    confidence = 100.0 / (1.0 + math.exp(-(positive_edge - 4.8) / 1.6))
+    return float(np.clip(confidence, 0.0, 100.0))
+
+
 def format_game_time_et(row: pd.Series) -> str:
     kickoff = str(row.get("kickoff_et", "")).strip()
     if kickoff and kickoff.lower() != "nan":
@@ -70,13 +117,6 @@ def format_game_time_et(row: pd.Series) -> str:
     return ""
 
 
-def edge_to_confidence(edge_pct: float) -> float:
-    positive_edge = max(edge_pct, 0.0)
-    # Logistic scaling tuned for sportsbook-style confidence bands.
-    confidence = 100.0 / (1.0 + np.exp(-(positive_edge - 4.8) / 1.6))
-    return float(np.clip(confidence, 0.0, 100.0))
-
-
 def build_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame = picks.copy()
     frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
@@ -86,12 +126,20 @@ def build_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["pick_team"] = np.where(pick_is_home, frame["home_team"], frame["away_team"])
     frame["pick_prob"] = np.where(pick_is_home, frame["model_home_win_prob"], frame["model_away_win_prob"])
     frame["pick_market_odds"] = np.where(pick_is_home, frame["home_moneyline"], frame["away_moneyline"])
-    frame["edge_raw"] = np.where(pick_is_home, frame["edge_home_vs_market"], frame["edge_away_vs_market"])
-    frame["edge_pct"] = frame["edge_raw"] * 100.0
-    frame["confidence_pct"] = frame["edge_pct"].map(edge_to_confidence)
-    frame["fair_odds"] = frame["pick_prob"].map(american_odds_from_probability)
+    frame["fair_odds"] = np.where(
+        pick_is_home,
+        frame["fair_home_odds"] if "fair_home_odds" in frame.columns else frame["pick_prob"].map(american_odds_from_probability),
+        frame["fair_away_odds"] if "fair_away_odds" in frame.columns else frame["pick_prob"].map(american_odds_from_probability),
+    )
+    frame["edge_pct"] = np.where(
+        pick_is_home, frame["edge_home_vs_market"] * 100.0, frame["edge_away_vs_market"] * 100.0
+    )
+    if "recommended_confidence_pct" in frame.columns:
+        frame["confidence_pct"] = pd.to_numeric(frame["recommended_confidence_pct"], errors="coerce")
+    else:
+        frame["confidence_pct"] = frame["edge_pct"].map(edge_to_confidence)
     frame["Mkt"] = frame["pick_market_odds"].map(odds_str)
-    frame["Fair"] = frame["fair_odds"].map(odds_str)
+    frame["Fair"] = pd.to_numeric(frame["fair_odds"], errors="coerce").fillna(0).map(odds_str)
     frame["Pick"] = frame["pick_team"]
     frame["Edge"] = frame["edge_pct"]
     frame["Confidence"] = frame["confidence_pct"]
@@ -109,11 +157,33 @@ def build_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     return frame.sort_values(["gameday_dt", "Away", "Home"]).reset_index(drop=True)
 
 
+def _pick_style(value: str) -> str:
+    code = str(value).upper()
+    color = TEAM_COLORS.get(code, "#7C3AED")
+    return (
+        f"background-color: {color}; color: white; font-weight: 800; text-align: center; "
+        "letter-spacing: 0.2px;"
+    )
+
+
 def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     styled = df.style
+    styled = styled.set_table_styles(
+        [
+            {
+                "selector": "th",
+                "props": "background-color:#20263A; color:#E5E7EB; font-weight:700; text-align:center;",
+            },
+            {
+                "selector": "td",
+                "props": "background-color:#121A2A; color:#E5E7EB; border-color:#263049;",
+            },
+        ]
+    )
     styled = styled.background_gradient(subset=["Edge"], cmap="RdYlGn")
     styled = styled.background_gradient(subset=["Confidence"], cmap="RdYlGn")
     styled = styled.format({"Edge": "{:+.1f}%", "Confidence": "{:.1f}%"})
+    styled = styled.map(_pick_style, subset=["Pick"])
     styled = styled.set_properties(
         subset=["Pick"],
         **{"font-weight": "700", "text-align": "center"},
@@ -127,6 +197,22 @@ def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         **{"font-weight": "600"},
     )
     return styled
+
+
+def render_record_bar(summary: dict) -> None:
+    tracking = summary.get("bet_tracking", {}) if summary else {}
+    previous_week = tracking.get("previous_week", {})
+    ytd = tracking.get("ytd", {})
+    season = tracking.get("tracking_season")
+    prev_week_num = tracking.get("previous_week_number")
+
+    c1, c2, c3 = st.columns(3)
+    prev_label = "Previous Week W-L"
+    if prev_week_num is not None:
+        prev_label = f"Week {int(prev_week_num)} W-L"
+    c1.metric(prev_label, previous_week.get("record", "0-0"), f"{previous_week.get('win_pct', 0):.1%}")
+    c2.metric("YTD W-L", ytd.get("record", "0-0"), f"{ytd.get('win_pct', 0):.1%}")
+    c3.metric("Tracking Season", str(season) if season else "N/A")
 
 
 summary = load_summary()
@@ -143,6 +229,7 @@ with refresh_col:
 if picks.empty:
     st.info("No published predictions found yet.")
 else:
+    render_record_bar(summary)
     display = build_display_frame(picks)
     available_slates = [d for d in display["slate_date"].dropna().unique().tolist() if pd.notna(d)]
     available_slates = sorted(available_slates)
@@ -192,7 +279,12 @@ else:
         )
 
 if summary:
+    tracking = summary.get("bet_tracking", {})
+    ytd = tracking.get("ytd", {})
+    prev = tracking.get("previous_week", {})
     st.caption(
-        f"Last updated: {summary.get('updated_at_et', 'n/a')} "
-        f"| Source: {summary.get('upcoming_source', 'n/a')}"
+        f"Last updated: {summary.get('updated_at_et', 'n/a')} | "
+        f"Source: {summary.get('upcoming_source', 'n/a')} | "
+        f"Prev Week: {prev.get('record', '0-0')} | "
+        f"YTD: {ytd.get('record', '0-0')}"
     )

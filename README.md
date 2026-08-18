@@ -13,11 +13,17 @@ This repository provides:
 2. Upcoming lines are pulled from **The Odds API** using your `ODDS_API_KEY`.
 3. The model writes:
    - private artifacts to `artifacts/` (ignored)
-   - public feed files to `published/` (committed by CI)
+   - public feed files to `published/` (committed by CI), including bet tracking
 4. The public app (`app.py`) reads from `published/`.
 5. The admin app (`admin_app.py`) can:
    - run the model immediately
    - trigger the GitHub workflow dispatch
+
+### Published outputs
+
+- `published/public_predictions.csv` - upcoming slate picks
+- `published/public_summary.json` - update metadata + previous week and YTD W-L summaries
+- `published/bet_history.csv` - graded historical model bets used for record tracking
 
 ## Files
 

@@ -19,6 +19,7 @@ HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
+PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 
 st.set_page_config(page_title="NFL Model Admin", layout="wide")
 st.title("NFL Moneyline Model - Admin")
@@ -123,6 +124,7 @@ public_summary = load_json(PUBLIC_SUMMARY_PATH)
 upcoming = load_csv(UPCOMING_PATH)
 holdout = load_csv(HOLDOUT_PATH)
 public_picks = load_csv(PUBLIC_PICKS_PATH)
+bet_history = load_csv(PUBLIC_BET_HISTORY_PATH)
 
 if metrics:
     st.subheader("Model metrics")
@@ -140,6 +142,21 @@ if metrics:
 if public_summary:
     st.subheader("Public feed status")
     st.json(public_summary)
+    tracking = public_summary.get("bet_tracking", {})
+    if tracking:
+        st.subheader("Bet tracking snapshot")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Previous week W-L",
+            (tracking.get("previous_week") or {}).get("record", "0-0"),
+            f"{(tracking.get('previous_week') or {}).get('win_pct', 0):.1%}",
+        )
+        c2.metric(
+            "YTD W-L",
+            (tracking.get("ytd") or {}).get("record", "0-0"),
+            f"{(tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
+        )
+        c3.metric("Tracking season", str(tracking.get("tracking_season", "N/A")))
 
 if not public_picks.empty:
     st.subheader("Published picks preview")
@@ -152,3 +169,7 @@ if not upcoming.empty:
 if not holdout.empty:
     st.subheader("Holdout sample (admin)")
     st.dataframe(holdout.head(50), use_container_width=True, hide_index=True)
+
+if not bet_history.empty:
+    st.subheader("Bet history (admin)")
+    st.dataframe(bet_history.head(100), use_container_width=True, hide_index=True)
