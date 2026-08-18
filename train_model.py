@@ -290,6 +290,43 @@ def _format_kickoff_et(value: object) -> str:
     return ts.strftime("%Y-%m-%d")
 
 
+def assign_schedule_week(upcoming_frame: pd.DataFrame, schedule_frame: pd.DataFrame) -> pd.DataFrame:
+    """Fill missing week values by matching upcoming games to schedule rows."""
+    if upcoming_frame.empty:
+        return upcoming_frame.copy()
+
+    enriched = upcoming_frame.copy()
+    if "week" not in enriched.columns:
+        enriched["week"] = pd.NA
+    missing = enriched["week"].isna()
+    if not missing.any():
+        return enriched
+
+    schedule_lookup = schedule_frame.copy()
+    schedule_lookup["season"] = pd.to_numeric(schedule_lookup["season"], errors="coerce")
+    schedule_lookup["week"] = pd.to_numeric(schedule_lookup["week"], errors="coerce")
+    schedule_lookup = schedule_lookup[
+        schedule_lookup["season"].notna()
+        & schedule_lookup["week"].notna()
+        & schedule_lookup["home_team"].notna()
+        & schedule_lookup["away_team"].notna()
+    ][["season", "home_team", "away_team", "week"]].drop_duplicates(
+        subset=["season", "home_team", "away_team"], keep="first"
+    )
+    if schedule_lookup.empty:
+        return enriched
+
+    enriched["season"] = pd.to_numeric(enriched["season"], errors="coerce")
+    mapped = enriched.merge(
+        schedule_lookup,
+        on=["season", "home_team", "away_team"],
+        how="left",
+        suffixes=("", "_schedule"),
+    )
+    enriched["week"] = enriched["week"].fillna(mapped["week_schedule"])
+    return enriched
+
+
 def export_public_outputs(
     upcoming_scored: pd.DataFrame,
     upcoming_totals_scored: pd.DataFrame,
@@ -607,12 +644,14 @@ def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[st
 
     upcoming_source = "nflverse"
     upcoming_frame = pd.DataFrame()
+    future_schedule = feature_frame[feature_frame["home_win"].isna()][["season", "week", "home_team", "away_team"]].copy()
     if use_odds_api and odds_api_key:
         try:
             odds_frame = fetch_upcoming_odds_frame(odds_api_key)
             if not odds_frame.empty:
                 team_snapshot, last_game_date = build_team_form_snapshot(games)
                 upcoming_frame = build_external_prediction_frame(odds_frame, team_snapshot, last_game_date)
+                upcoming_frame = assign_schedule_week(upcoming_frame, future_schedule)
                 upcoming_source = "odds_api"
         except Exception as exc:
             print(f"Odds API fetch failed ({exc}). Falling back to nflverse upcoming rows.")
