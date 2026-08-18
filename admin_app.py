@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 from pathlib import Path
 
@@ -18,18 +19,47 @@ HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
+PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 
 st.set_page_config(page_title="NFL Model Admin", layout="wide")
 st.title("NFL Moneyline Model - Admin")
 st.caption("Run the model, publish outputs, and trigger GitHub CI refreshes.")
 
+admin_passphrase = st.secrets.get("ADMIN_PASSPHRASE", "")
 odds_api_key = st.secrets.get("ODDS_API_KEY", "")
 github_token = st.secrets.get("GITHUB_TOKEN", "")
 github_repo = st.secrets.get("GITHUB_REPO", "")
 github_workflow = st.secrets.get("GITHUB_WORKFLOW_FILE", "daily-model-update.yml")
 github_ref = st.secrets.get("GITHUB_REF", "main")
 
+if "admin_authenticated" not in st.session_state:
+    st.session_state["admin_authenticated"] = False
+
+if not admin_passphrase:
+    st.error("Missing ADMIN_PASSPHRASE in Streamlit secrets. Add it to enable admin login.")
+    st.stop()
+
+if not st.session_state["admin_authenticated"]:
+    st.subheader("Admin login required")
+    with st.form("admin_login_form"):
+        entered_passphrase = st.text_input("Passphrase", type="password")
+        submitted = st.form_submit_button("Unlock admin")
+
+    if submitted:
+        if hmac.compare_digest(entered_passphrase, admin_passphrase):
+            st.session_state["admin_authenticated"] = True
+            st.success("Login successful.")
+            st.rerun()
+        else:
+            st.error("Incorrect passphrase.")
+    st.stop()
+
+if st.button("Log out"):
+    st.session_state["admin_authenticated"] = False
+    st.rerun()
+
 with st.expander("Configuration status", expanded=True):
+    st.write("ADMIN_PASSPHRASE configured: yes")
     st.write(f"ODDS_API_KEY configured: {'yes' if odds_api_key else 'no'}")
     st.write(f"GITHUB_TOKEN configured: {'yes' if github_token else 'no'}")
     st.write(f"GITHUB_REPO configured: {github_repo or 'no'}")
@@ -94,6 +124,7 @@ public_summary = load_json(PUBLIC_SUMMARY_PATH)
 upcoming = load_csv(UPCOMING_PATH)
 holdout = load_csv(HOLDOUT_PATH)
 public_picks = load_csv(PUBLIC_PICKS_PATH)
+bet_history = load_csv(PUBLIC_BET_HISTORY_PATH)
 
 if metrics:
     st.subheader("Model metrics")
@@ -111,6 +142,21 @@ if metrics:
 if public_summary:
     st.subheader("Public feed status")
     st.json(public_summary)
+    tracking = public_summary.get("bet_tracking", {})
+    if tracking:
+        st.subheader("Bet tracking snapshot")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Previous week W-L",
+            (tracking.get("previous_week") or {}).get("record", "0-0"),
+            f"{(tracking.get('previous_week') or {}).get('win_pct', 0):.1%}",
+        )
+        c2.metric(
+            "YTD W-L",
+            (tracking.get("ytd") or {}).get("record", "0-0"),
+            f"{(tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
+        )
+        c3.metric("Tracking season", str(tracking.get("tracking_season", "N/A")))
 
 if not public_picks.empty:
     st.subheader("Published picks preview")
@@ -123,3 +169,7 @@ if not upcoming.empty:
 if not holdout.empty:
     st.subheader("Holdout sample (admin)")
     st.dataframe(holdout.head(50), use_container_width=True, hide_index=True)
+
+if not bet_history.empty:
+    st.subheader("Bet history (admin)")
+    st.dataframe(bet_history.head(100), use_container_width=True, hide_index=True)
