@@ -67,6 +67,7 @@ python3 -m streamlit run admin_app.py
 Set these in your admin Streamlit deployment secrets:
 
 ```toml
+ADMIN_PASSPHRASE = "your_private_passphrase"
 ODDS_API_KEY = "your_odds_api_key"
 GITHUB_TOKEN = "your_github_pat_with_repo_and_workflow_permissions"
 GITHUB_REPO = "owner/repo"
@@ -74,7 +75,8 @@ GITHUB_WORKFLOW_FILE = "daily-model-update.yml"
 GITHUB_REF = "main"
 ```
 
-Only `ODDS_API_KEY` is required to run locally from admin.  
+`ADMIN_PASSPHRASE` is required for admin login.  
+`ODDS_API_KEY` is required for Odds API pulls.  
 The GitHub fields are required if you want the admin app button to trigger CI.
 
 ## GitHub CI daily schedule (noon ET)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 from pathlib import Path
 
@@ -23,13 +24,41 @@ st.set_page_config(page_title="NFL Model Admin", layout="wide")
 st.title("NFL Moneyline Model - Admin")
 st.caption("Run the model, publish outputs, and trigger GitHub CI refreshes.")
 
+admin_passphrase = st.secrets.get("ADMIN_PASSPHRASE", "")
 odds_api_key = st.secrets.get("ODDS_API_KEY", "")
 github_token = st.secrets.get("GITHUB_TOKEN", "")
 github_repo = st.secrets.get("GITHUB_REPO", "")
 github_workflow = st.secrets.get("GITHUB_WORKFLOW_FILE", "daily-model-update.yml")
 github_ref = st.secrets.get("GITHUB_REF", "main")
 
+if "admin_authenticated" not in st.session_state:
+    st.session_state["admin_authenticated"] = False
+
+if not admin_passphrase:
+    st.error("Missing ADMIN_PASSPHRASE in Streamlit secrets. Add it to enable admin login.")
+    st.stop()
+
+if not st.session_state["admin_authenticated"]:
+    st.subheader("Admin login required")
+    with st.form("admin_login_form"):
+        entered_passphrase = st.text_input("Passphrase", type="password")
+        submitted = st.form_submit_button("Unlock admin")
+
+    if submitted:
+        if hmac.compare_digest(entered_passphrase, admin_passphrase):
+            st.session_state["admin_authenticated"] = True
+            st.success("Login successful.")
+            st.rerun()
+        else:
+            st.error("Incorrect passphrase.")
+    st.stop()
+
+if st.button("Log out"):
+    st.session_state["admin_authenticated"] = False
+    st.rerun()
+
 with st.expander("Configuration status", expanded=True):
+    st.write("ADMIN_PASSPHRASE configured: yes")
     st.write(f"ODDS_API_KEY configured: {'yes' if odds_api_key else 'no'}")
     st.write(f"GITHUB_TOKEN configured: {'yes' if github_token else 'no'}")
     st.write(f"GITHUB_REPO configured: {github_repo or 'no'}")
