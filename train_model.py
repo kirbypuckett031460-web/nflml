@@ -19,20 +19,32 @@ from nfl_moneyline.features import (
     build_modeling_frame,
     build_prediction_frame,
     build_team_form_snapshot,
+    build_total_modeling_frame,
 )
-from nfl_moneyline.modeling import NFLMoneylineModel, evaluate_model, split_train_test_by_season
-from nfl_moneyline.odds import expected_value_per_dollar
+from nfl_moneyline.modeling import (
+    NFLMoneylineModel,
+    NFLTotalModel,
+    evaluate_model,
+    evaluate_total_model,
+    split_train_test_by_season,
+)
+from nfl_moneyline.odds import expected_value_per_dollar, no_vig_probabilities
 from nfl_moneyline.odds_api import fetch_upcoming_odds_frame
 
 ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
 MODEL_PATH = ARTIFACT_DIR / "moneyline_model.joblib"
+TOTAL_MODEL_PATH = ARTIFACT_DIR / "total_model.joblib"
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
 HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
+HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
+UPCOMING_TOTALS_PATH = ARTIFACT_DIR / "upcoming_totals_predictions.csv"
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
+PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
+PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
 
 
 def score_upcoming_games(model: NFLMoneylineModel, frame: pd.DataFrame) -> pd.DataFrame:
@@ -59,6 +71,52 @@ def score_upcoming_games(model: NFLMoneylineModel, frame: pd.DataFrame) -> pd.Da
         axis=1,
     )
     scored["recommended_ev_per_dollar"] = scored[["home_ev_per_dollar", "away_ev_per_dollar"]].max(axis=1)
+    return scored
+
+
+def score_upcoming_totals(model: NFLTotalModel, frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+
+    scored = frame.copy()
+    scored["model_over_prob"] = model.predict_over_prob(scored)
+    scored["model_under_prob"] = 1.0 - scored["model_over_prob"]
+
+    scored["market_over_prob"] = pd.NA
+    scored["market_under_prob"] = pd.NA
+    if "over_odds" in scored.columns and "under_odds" in scored.columns:
+        market_probs = scored.apply(
+            lambda row: no_vig_probabilities(row["over_odds"], row["under_odds"]),
+            axis=1,
+        )
+        scored["market_over_prob"] = [item[0] for item in market_probs]
+        scored["market_under_prob"] = [item[1] for item in market_probs]
+
+    scored["edge_over_vs_market"] = scored["model_over_prob"] - pd.to_numeric(
+        scored["market_over_prob"], errors="coerce"
+    )
+    scored["edge_under_vs_market"] = scored["model_under_prob"] - pd.to_numeric(
+        scored["market_under_prob"], errors="coerce"
+    )
+
+    scored["over_ev_per_dollar"] = scored.apply(
+        lambda row: expected_value_per_dollar(row["model_over_prob"], row["over_odds"]),
+        axis=1,
+    )
+    scored["under_ev_per_dollar"] = scored.apply(
+        lambda row: expected_value_per_dollar(row["model_under_prob"], row["under_odds"]),
+        axis=1,
+    )
+    def choose_total_side(row: pd.Series) -> str:
+        over_ev = row["over_ev_per_dollar"]
+        under_ev = row["under_ev_per_dollar"]
+        if pd.notna(over_ev) and pd.notna(under_ev):
+            return "OVER" if over_ev >= under_ev else "UNDER"
+        return "OVER" if row["model_over_prob"] >= row["model_under_prob"] else "UNDER"
+
+    scored["recommended_total_side"] = scored.apply(choose_total_side, axis=1)
+    scored["recommended_total_ev_per_dollar"] = scored[["over_ev_per_dollar", "under_ev_per_dollar"]].max(axis=1)
+    scored["recommended_total_ev_per_dollar"] = scored["recommended_total_ev_per_dollar"].fillna(0.0)
     return scored
 
 
@@ -102,6 +160,31 @@ def build_bet_tracking_frame(model: NFLMoneylineModel, modeling_frame: pd.DataFr
     scored.loc[picked_home_win | picked_away_win, "bet_result"] = "WIN"
     scored.loc[tie_mask, "bet_result"] = "PUSH"
 
+    return scored
+
+
+def build_total_bet_tracking_frame(model: NFLTotalModel, total_modeling_frame: pd.DataFrame) -> pd.DataFrame:
+    if total_modeling_frame.empty:
+        return total_modeling_frame.copy()
+
+    scored = score_upcoming_totals(model, total_modeling_frame.copy())
+    pick_is_over = scored["recommended_total_side"].eq("OVER")
+    scored["pick_team"] = scored["recommended_total_side"]
+    scored["pick_market_odds"] = scored["over_odds"].where(pick_is_over, scored["under_odds"])
+    scored["pick_prob"] = scored["model_over_prob"].where(pick_is_over, scored["model_under_prob"])
+    scored["edge_pct"] = (
+        scored["edge_over_vs_market"].where(pick_is_over, scored["edge_under_vs_market"]) * 100.0
+    )
+    scored["edge_pct"] = scored["edge_pct"].fillna((scored["pick_prob"] - 0.5) * 100.0 * 2.0)
+    scored["confidence_pct"] = scored["edge_pct"].map(edge_to_confidence)
+    scored["fair_odds"] = scored["pick_prob"].map(american_odds_from_probability)
+
+    total_points = pd.to_numeric(scored["game_total_points"], errors="coerce")
+    total_line = pd.to_numeric(scored["total_line"], errors="coerce")
+    scored["bet_result"] = "LOSS"
+    scored.loc[pick_is_over & total_points.gt(total_line), "bet_result"] = "WIN"
+    scored.loc[(~pick_is_over) & total_points.lt(total_line), "bet_result"] = "WIN"
+    scored.loc[total_points.eq(total_line), "bet_result"] = "PUSH"
     return scored
 
 
@@ -209,10 +292,13 @@ def _format_kickoff_et(value: object) -> str:
 
 def export_public_outputs(
     upcoming_scored: pd.DataFrame,
+    upcoming_totals_scored: pd.DataFrame,
     metrics: dict[str, float],
     source: str,
-    bet_history: pd.DataFrame,
-    bet_tracking_summary: dict[str, object],
+    moneyline_bet_history: pd.DataFrame,
+    total_bet_history: pd.DataFrame,
+    moneyline_tracking_summary: dict[str, object],
+    total_tracking_summary: dict[str, object],
 ) -> None:
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -289,7 +375,85 @@ def export_public_outputs(
 
     public.to_csv(PUBLIC_PICKS_PATH, index=False)
 
-    if bet_history.empty:
+    public_totals = upcoming_totals_scored.copy()
+    if public_totals.empty:
+        public_totals = pd.DataFrame(
+            columns=[
+                "gameday",
+                "kickoff_et",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "away_team_name",
+                "home_team_name",
+                "bookmaker",
+                "total_line",
+                "over_odds",
+                "under_odds",
+                "model_over_prob",
+                "model_under_prob",
+                "edge_over_vs_market",
+                "edge_under_vs_market",
+                "recommended_total_side",
+                "recommended_total_ev_per_dollar",
+                "fair_over_odds",
+                "fair_under_odds",
+                "confidence_over_pct",
+                "confidence_under_pct",
+                "recommended_total_confidence_pct",
+            ]
+        )
+    else:
+        public_totals["kickoff_et"] = public_totals["gameday"].map(_format_kickoff_et)
+        if "home_team_name" not in public_totals.columns:
+            public_totals["home_team_name"] = public_totals["home_team"]
+        if "away_team_name" not in public_totals.columns:
+            public_totals["away_team_name"] = public_totals["away_team"]
+        if "bookmaker" not in public_totals.columns:
+            public_totals["bookmaker"] = "nflverse"
+        public_totals["fair_over_odds"] = public_totals["model_over_prob"].map(american_odds_from_probability)
+        public_totals["fair_under_odds"] = public_totals["model_under_prob"].map(american_odds_from_probability)
+        public_totals["confidence_over_pct"] = (public_totals["edge_over_vs_market"] * 100.0).map(edge_to_confidence)
+        public_totals["confidence_under_pct"] = (public_totals["edge_under_vs_market"] * 100.0).map(edge_to_confidence)
+        fallback_over_conf = ((public_totals["model_over_prob"] - 0.5).abs() * 200.0).map(edge_to_confidence)
+        fallback_under_conf = ((public_totals["model_under_prob"] - 0.5).abs() * 200.0).map(edge_to_confidence)
+        public_totals["confidence_over_pct"] = public_totals["confidence_over_pct"].fillna(fallback_over_conf)
+        public_totals["confidence_under_pct"] = public_totals["confidence_under_pct"].fillna(fallback_under_conf)
+        pick_is_over = public_totals["recommended_total_side"].eq("OVER")
+        public_totals["recommended_total_confidence_pct"] = public_totals["confidence_over_pct"].where(
+            pick_is_over, public_totals["confidence_under_pct"]
+        )
+        public_totals = public_totals[
+            [
+                "gameday",
+                "kickoff_et",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "away_team_name",
+                "home_team_name",
+                "bookmaker",
+                "total_line",
+                "over_odds",
+                "under_odds",
+                "model_over_prob",
+                "model_under_prob",
+                "edge_over_vs_market",
+                "edge_under_vs_market",
+                "recommended_total_side",
+                "recommended_total_ev_per_dollar",
+                "fair_over_odds",
+                "fair_under_odds",
+                "confidence_over_pct",
+                "confidence_under_pct",
+                "recommended_total_confidence_pct",
+            ]
+        ].sort_values(["gameday", "away_team", "home_team"])
+    public_totals.to_csv(PUBLIC_TOTALS_PATH, index=False)
+
+    if moneyline_bet_history.empty:
         pd.DataFrame(
             columns=[
                 "gameday",
@@ -306,8 +470,8 @@ def export_public_outputs(
             ]
         ).to_csv(PUBLIC_BET_HISTORY_PATH, index=False)
     else:
-        tracking_season = bet_tracking_summary.get("tracking_season")
-        bet_public_source = bet_history.copy()
+        tracking_season = moneyline_tracking_summary.get("tracking_season")
+        bet_public_source = moneyline_bet_history.copy()
         if tracking_season is not None:
             bet_public_source = bet_public_source[
                 pd.to_numeric(bet_public_source["season"], errors="coerce").eq(float(tracking_season))
@@ -334,16 +498,63 @@ def export_public_outputs(
         ].sort_values(["gameday", "away_team", "home_team"])
         bet_public.to_csv(PUBLIC_BET_HISTORY_PATH, index=False)
 
+    if total_bet_history.empty:
+        pd.DataFrame(
+            columns=[
+                "gameday",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "pick_team",
+                "pick_market_odds",
+                "fair_odds",
+                "edge_pct",
+                "confidence_pct",
+                "bet_result",
+            ]
+        ).to_csv(PUBLIC_TOTAL_BET_HISTORY_PATH, index=False)
+    else:
+        tracking_season = total_tracking_summary.get("tracking_season")
+        total_public_source = total_bet_history.copy()
+        if tracking_season is not None:
+            total_public_source = total_public_source[
+                pd.to_numeric(total_public_source["season"], errors="coerce").eq(float(tracking_season))
+            ].copy()
+        if "game_type" in total_public_source.columns:
+            reg_only = total_public_source[total_public_source["game_type"] == "REG"].copy()
+            if not reg_only.empty:
+                total_public_source = reg_only
+
+        total_public = total_public_source[
+            [
+                "gameday",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "pick_team",
+                "pick_market_odds",
+                "fair_odds",
+                "edge_pct",
+                "confidence_pct",
+                "bet_result",
+            ]
+        ].sort_values(["gameday", "away_team", "home_team"])
+        total_public.to_csv(PUBLIC_TOTAL_BET_HISTORY_PATH, index=False)
+
     now_utc = datetime.now(timezone.utc)
     summary = {
         "updated_at_utc": now_utc.isoformat(),
         "updated_at_et": now_utc.astimezone(ZoneInfo("America/New_York")).isoformat(),
         "upcoming_source": source,
         "num_upcoming_games": int(len(public)),
+        "num_upcoming_totals_games": int(len(public_totals)),
         "holdout_accuracy": float(metrics.get("accuracy", 0.0)),
         "holdout_roc_auc": float(metrics.get("roc_auc", 0.0)),
         "holdout_brier_score": float(metrics.get("brier_score", 0.0)),
-        "bet_tracking": bet_tracking_summary,
+        "moneyline_bet_tracking": moneyline_tracking_summary,
+        "total_bet_tracking": total_tracking_summary,
     }
     with PUBLIC_SUMMARY_PATH.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, sort_keys=True)
@@ -356,9 +567,12 @@ def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[st
     games = load_games_data()
     feature_frame = build_feature_frame(games)
     modeling_frame = build_modeling_frame(feature_frame)
+    total_modeling_frame = build_total_modeling_frame(feature_frame)
 
     if modeling_frame.empty:
         raise RuntimeError("No completed games with moneyline data were found.")
+    if total_modeling_frame.empty:
+        raise RuntimeError("No completed games with total-line data were found.")
 
     train_frame, test_frame = split_train_test_by_season(modeling_frame)
 
@@ -372,6 +586,24 @@ def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[st
     final_model = NFLMoneylineModel()
     final_model.fit(modeling_frame)
     final_model.save(str(MODEL_PATH))
+
+    total_train, total_test = split_train_test_by_season(total_modeling_frame)
+    total_eval_model = NFLTotalModel()
+    total_eval_model.fit(total_train)
+    total_metrics, holdout_total_scored = evaluate_total_model(total_eval_model, total_test)
+    metrics["total_model"] = {
+        "accuracy": float(total_metrics.get("accuracy", 0.0)),
+        "brier_score": float(total_metrics.get("brier_score", 0.0)),
+        "log_loss": float(total_metrics.get("log_loss", 0.0)),
+        "roc_auc": float(total_metrics.get("roc_auc", 0.0)) if "roc_auc" in total_metrics else None,
+        "train_rows": int(len(total_train)),
+        "test_rows": int(len(total_test)),
+        "latest_test_season": int(total_test["season"].max()) if not total_test.empty else None,
+    }
+
+    final_total_model = NFLTotalModel()
+    final_total_model.fit(total_modeling_frame)
+    final_total_model.save(str(TOTAL_MODEL_PATH))
 
     upcoming_source = "nflverse"
     upcoming_frame = pd.DataFrame()
@@ -390,29 +622,54 @@ def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[st
         upcoming_source = "nflverse"
 
     upcoming_scored = score_upcoming_games(final_model, upcoming_frame)
+    upcoming_totals_frame = upcoming_frame.copy()
+    if "total_line" in upcoming_totals_frame.columns:
+        upcoming_totals_frame = upcoming_totals_frame[upcoming_totals_frame["total_line"].notna()].copy()
+    upcoming_totals_scored = score_upcoming_totals(final_total_model, upcoming_totals_frame)
     metrics["upcoming_source"] = upcoming_source
-    bet_history = build_bet_tracking_frame(final_model, modeling_frame)
-    bet_tracking_summary = build_bet_tracking_summary(bet_history)
+    moneyline_bet_history = build_bet_tracking_frame(final_model, modeling_frame)
+    moneyline_tracking_summary = build_bet_tracking_summary(moneyline_bet_history)
+    total_bet_history = build_total_bet_tracking_frame(final_total_model, total_modeling_frame)
+    total_tracking_summary = build_bet_tracking_summary(total_bet_history)
 
     with METRICS_PATH.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, sort_keys=True)
 
     holdout_scored.to_csv(HOLDOUT_PATH, index=False)
+    holdout_total_scored.to_csv(HOLDOUT_TOTAL_PATH, index=False)
     upcoming_scored.to_csv(UPCOMING_PATH, index=False)
-    export_public_outputs(upcoming_scored, metrics, upcoming_source, bet_history, bet_tracking_summary)
+    upcoming_totals_scored.to_csv(UPCOMING_TOTALS_PATH, index=False)
+    export_public_outputs(
+        upcoming_scored,
+        upcoming_totals_scored,
+        metrics,
+        upcoming_source,
+        moneyline_bet_history,
+        total_bet_history,
+        moneyline_tracking_summary,
+        total_tracking_summary,
+    )
 
     return {
         "model_path": str(MODEL_PATH),
+        "total_model_path": str(TOTAL_MODEL_PATH),
         "metrics_path": str(METRICS_PATH),
         "holdout_path": str(HOLDOUT_PATH),
+        "holdout_total_path": str(HOLDOUT_TOTAL_PATH),
         "upcoming_path": str(UPCOMING_PATH),
+        "upcoming_totals_path": str(UPCOMING_TOTALS_PATH),
         "public_predictions_path": str(PUBLIC_PICKS_PATH),
+        "public_totals_path": str(PUBLIC_TOTALS_PATH),
         "public_summary_path": str(PUBLIC_SUMMARY_PATH),
         "public_bet_history_path": str(PUBLIC_BET_HISTORY_PATH),
+        "public_total_bet_history_path": str(PUBLIC_TOTAL_BET_HISTORY_PATH),
         "upcoming_source": upcoming_source,
         "upcoming_rows": int(len(upcoming_scored)),
-        "tracking_season": bet_tracking_summary.get("tracking_season"),
-        "ytd_record": (bet_tracking_summary.get("ytd") or {}).get("record", "0-0"),
+        "upcoming_totals_rows": int(len(upcoming_totals_scored)),
+        "moneyline_tracking_season": moneyline_tracking_summary.get("tracking_season"),
+        "moneyline_ytd_record": (moneyline_tracking_summary.get("ytd") or {}).get("record", "0-0"),
+        "totals_tracking_season": total_tracking_summary.get("tracking_season"),
+        "totals_ytd_record": (total_tracking_summary.get("ytd") or {}).get("record", "0-0"),
     }
 
 
@@ -436,16 +693,24 @@ def main() -> None:
     result = run_pipeline(args.odds_api_key, use_odds_api=not args.skip_odds_api)
 
     print(f"Model saved to: {result['model_path']}")
+    print(f"Total model saved to: {result['total_model_path']}")
     print(f"Metrics saved to: {result['metrics_path']}")
     print(f"Holdout results saved to: {result['holdout_path']}")
+    print(f"Holdout totals saved to: {result['holdout_total_path']}")
     print(f"Upcoming predictions saved to: {result['upcoming_path']}")
+    print(f"Upcoming totals predictions saved to: {result['upcoming_totals_path']}")
     print(f"Public predictions saved to: {result['public_predictions_path']}")
+    print(f"Public totals predictions saved to: {result['public_totals_path']}")
     print(f"Public summary saved to: {result['public_summary_path']}")
     print(f"Public bet history saved to: {result['public_bet_history_path']}")
+    print(f"Public totals bet history saved to: {result['public_total_bet_history_path']}")
     print(f"Upcoming source: {result['upcoming_source']}")
     print(f"Upcoming rows: {result['upcoming_rows']}")
-    print(f"Tracking season: {result['tracking_season']}")
-    print(f"YTD record: {result['ytd_record']}")
+    print(f"Upcoming totals rows: {result['upcoming_totals_rows']}")
+    print(f"Moneyline tracking season: {result['moneyline_tracking_season']}")
+    print(f"Moneyline YTD record: {result['moneyline_ytd_record']}")
+    print(f"Totals tracking season: {result['totals_tracking_season']}")
+    print(f"Totals YTD record: {result['totals_ytd_record']}")
 
 
 if __name__ == "__main__":

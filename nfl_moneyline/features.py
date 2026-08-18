@@ -26,6 +26,18 @@ FEATURE_COLUMNS = [
     "away_recent_points_for",
 ]
 
+TOTAL_FEATURE_COLUMNS = [
+    "total_line",
+    "rest_diff",
+    "home_recent_points_for",
+    "away_recent_points_for",
+    "home_recent_point_diff",
+    "away_recent_point_diff",
+    "recent_point_diff_diff",
+    "home_recent_win_rate",
+    "away_recent_win_rate",
+]
+
 DEFAULT_TEAM_FEATURES = {
     "recent_win_rate": 0.5,
     "recent_point_diff": 0.0,
@@ -91,11 +103,14 @@ def build_feature_frame(games_df: pd.DataFrame) -> pd.DataFrame:
             "away_team": game.away_team,
             "home_moneyline": game.home_moneyline,
             "away_moneyline": game.away_moneyline,
+            "over_odds": game.over_odds if hasattr(game, "over_odds") else np.nan,
+            "under_odds": game.under_odds if hasattr(game, "under_odds") else np.nan,
             "home_score": game.home_score,
             "away_score": game.away_score,
             "market_home_prob": home_market_prob,
             "market_away_prob": away_market_prob,
             "home_spread_line": -game.spread_line if pd.notna(game.spread_line) else np.nan,
+            "total_line": game.total_line if hasattr(game, "total_line") else np.nan,
             "rest_diff": (
                 (game.home_rest - game.away_rest)
                 if pd.notna(game.home_rest) and pd.notna(game.away_rest)
@@ -107,6 +122,11 @@ def build_feature_frame(games_df: pd.DataFrame) -> pd.DataFrame:
 
         row["recent_win_rate_diff"] = row["home_recent_win_rate"] - row["away_recent_win_rate"]
         row["recent_point_diff_diff"] = row["home_recent_point_diff"] - row["away_recent_point_diff"]
+        row["game_total_points"] = (
+            float(game.home_score) + float(game.away_score)
+            if pd.notna(game.home_score) and pd.notna(game.away_score)
+            else np.nan
+        )
 
         is_completed = pd.notna(game.home_score) and pd.notna(game.away_score)
         row["home_win"] = (
@@ -150,6 +170,17 @@ def build_prediction_frame(feature_df: pd.DataFrame) -> pd.DataFrame:
         & feature_df["away_moneyline"].notna()
     ].copy()
     return pred.sort_values(["gameday", "game_id"]).reset_index(drop=True)
+
+
+def build_total_modeling_frame(feature_df: pd.DataFrame) -> pd.DataFrame:
+    """Return completed games with total lines for O/U modeling."""
+    frame = feature_df[
+        feature_df["game_total_points"].notna()
+        & feature_df["total_line"].notna()
+    ].copy()
+    frame["over_hit"] = (frame["game_total_points"] > frame["total_line"]).astype(int)
+    frame = frame[frame["game_total_points"] != frame["total_line"]].copy()
+    return frame
 
 
 def build_team_form_snapshot(
@@ -235,11 +266,16 @@ def build_external_prediction_frame(
             "away_team_name": getattr(game, "away_team_name", game.away_team),
             "home_moneyline": float(game.home_moneyline),
             "away_moneyline": float(game.away_moneyline),
+            "over_odds": float(game.over_odds) if hasattr(game, "over_odds") and pd.notna(game.over_odds) else np.nan,
+            "under_odds": float(game.under_odds)
+            if hasattr(game, "under_odds") and pd.notna(game.under_odds)
+            else np.nan,
             "home_score": np.nan,
             "away_score": np.nan,
             "market_home_prob": home_prob,
             "market_away_prob": away_prob,
             "home_spread_line": game.home_spread_line if pd.notna(game.home_spread_line) else np.nan,
+            "total_line": game.total_line if hasattr(game, "total_line") and pd.notna(game.total_line) else np.nan,
             "rest_diff": rest_diff,
             "home_recent_win_rate": float(home_form["recent_win_rate"]),
             "home_recent_point_diff": float(home_form["recent_point_diff"]),
@@ -248,6 +284,7 @@ def build_external_prediction_frame(
             "away_recent_point_diff": float(away_form["recent_point_diff"]),
             "away_recent_points_for": float(away_form["recent_points_for"]),
             "home_win": np.nan,
+            "game_total_points": np.nan,
         }
         row["recent_win_rate_diff"] = row["home_recent_win_rate"] - row["away_recent_win_rate"]
         row["recent_point_diff_diff"] = row["home_recent_point_diff"] - row["away_recent_point_diff"]

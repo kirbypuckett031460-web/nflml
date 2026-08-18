@@ -16,10 +16,14 @@ ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
 HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
+HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
+UPCOMING_TOTALS_PATH = ARTIFACT_DIR / "upcoming_totals_predictions.csv"
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
+PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
+PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
 
 st.set_page_config(page_title="NFL Model Admin", layout="wide")
 st.title("NFL Moneyline Model - Admin")
@@ -122,9 +126,13 @@ st.divider()
 metrics = load_json(METRICS_PATH)
 public_summary = load_json(PUBLIC_SUMMARY_PATH)
 upcoming = load_csv(UPCOMING_PATH)
+upcoming_totals = load_csv(UPCOMING_TOTALS_PATH)
 holdout = load_csv(HOLDOUT_PATH)
+holdout_totals = load_csv(HOLDOUT_TOTAL_PATH)
 public_picks = load_csv(PUBLIC_PICKS_PATH)
+public_totals = load_csv(PUBLIC_TOTALS_PATH)
 bet_history = load_csv(PUBLIC_BET_HISTORY_PATH)
+totals_bet_history = load_csv(PUBLIC_TOTAL_BET_HISTORY_PATH)
 
 if metrics:
     st.subheader("Model metrics")
@@ -138,38 +146,73 @@ if metrics:
         f"Test rows: {metrics.get('test_rows', 0):,} | "
         f"Upcoming source: {metrics.get('upcoming_source', 'n/a')}"
     )
+    if "total_model" in metrics and isinstance(metrics["total_model"], dict):
+        total_m = metrics["total_model"]
+        st.caption(
+            "Totals model — "
+            f"Accuracy: {float(total_m.get('accuracy', 0.0)):.3f} | "
+            f"ROC-AUC: {float(total_m.get('roc_auc', 0.0) or 0.0):.3f} | "
+            f"Train rows: {int(total_m.get('train_rows', 0)):,} | "
+            f"Test rows: {int(total_m.get('test_rows', 0)):,}"
+        )
 
 if public_summary:
     st.subheader("Public feed status")
     st.json(public_summary)
-    tracking = public_summary.get("bet_tracking", {})
-    if tracking:
+    ml_tracking = public_summary.get("moneyline_bet_tracking", public_summary.get("bet_tracking", {}))
+    total_tracking = public_summary.get("total_bet_tracking", {})
+    if ml_tracking or total_tracking:
         st.subheader("Bet tracking snapshot")
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric(
-            "Previous week W-L",
-            (tracking.get("previous_week") or {}).get("record", "0-0"),
-            f"{(tracking.get('previous_week') or {}).get('win_pct', 0):.1%}",
+            "Moneyline Prev Week",
+            (ml_tracking.get("previous_week") or {}).get("record", "0-0"),
+            f"{(ml_tracking.get('previous_week') or {}).get('win_pct', 0):.1%}",
         )
         c2.metric(
-            "YTD W-L",
-            (tracking.get("ytd") or {}).get("record", "0-0"),
-            f"{(tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
+            "Moneyline YTD",
+            (ml_tracking.get("ytd") or {}).get("record", "0-0"),
+            f"{(ml_tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
         )
-        c3.metric("Tracking season", str(tracking.get("tracking_season", "N/A")))
+        c3.metric(
+            "Totals Prev Week",
+            (total_tracking.get("previous_week") or {}).get("record", "0-0"),
+            f"{(total_tracking.get('previous_week') or {}).get('win_pct', 0):.1%}",
+        )
+        c4.metric(
+            "Totals YTD",
+            (total_tracking.get("ytd") or {}).get("record", "0-0"),
+            f"{(total_tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
+        )
 
 if not public_picks.empty:
     st.subheader("Published picks preview")
     st.dataframe(public_picks.head(50), use_container_width=True, hide_index=True)
 
+if not public_totals.empty:
+    st.subheader("Published totals picks preview")
+    st.dataframe(public_totals.head(50), use_container_width=True, hide_index=True)
+
 if not upcoming.empty:
     st.subheader("Raw upcoming scored rows (admin)")
     st.dataframe(upcoming.head(50), use_container_width=True, hide_index=True)
+
+if not upcoming_totals.empty:
+    st.subheader("Raw upcoming totals scored rows (admin)")
+    st.dataframe(upcoming_totals.head(50), use_container_width=True, hide_index=True)
 
 if not holdout.empty:
     st.subheader("Holdout sample (admin)")
     st.dataframe(holdout.head(50), use_container_width=True, hide_index=True)
 
+if not holdout_totals.empty:
+    st.subheader("Holdout totals sample (admin)")
+    st.dataframe(holdout_totals.head(50), use_container_width=True, hide_index=True)
+
 if not bet_history.empty:
     st.subheader("Bet history (admin)")
     st.dataframe(bet_history.head(100), use_container_width=True, hide_index=True)
+
+if not totals_bet_history.empty:
+    st.subheader("Totals bet history (admin)")
+    st.dataframe(totals_bet_history.head(100), use_container_width=True, hide_index=True)

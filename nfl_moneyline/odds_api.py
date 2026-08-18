@@ -51,6 +51,8 @@ PREFERRED_BOOKMAKERS = ["draftkings", "fanduel", "betmgm", "caesars", "espnbet",
 def _parse_bookmaker_markets(bookmaker: dict, home_team_name: str, away_team_name: str) -> dict:
     h2h_prices: dict[str, float] = {}
     spread_points: dict[str, float] = {}
+    totals: dict[str, float] = {}
+    total_line: float | None = None
 
     for market in bookmaker.get("markets", []):
         key = market.get("key")
@@ -67,6 +69,15 @@ def _parse_bookmaker_markets(bookmaker: dict, home_team_name: str, away_team_nam
                 point = outcome.get("point")
                 if name in {home_team_name, away_team_name} and point is not None:
                     spread_points[name] = float(point)
+        if key == "totals":
+            for outcome in outcomes:
+                name = outcome.get("name")
+                price = outcome.get("price")
+                point = outcome.get("point")
+                if name in {"Over", "Under"} and price is not None:
+                    totals[name] = float(price)
+                if point is not None:
+                    total_line = float(point)
 
     if home_team_name not in h2h_prices or away_team_name not in h2h_prices:
         return {}
@@ -75,6 +86,9 @@ def _parse_bookmaker_markets(bookmaker: dict, home_team_name: str, away_team_nam
         "home_moneyline": h2h_prices[home_team_name],
         "away_moneyline": h2h_prices[away_team_name],
         "home_spread_line": spread_points.get(home_team_name),
+        "total_line": total_line,
+        "over_odds": totals.get("Over"),
+        "under_odds": totals.get("Under"),
     }
 
 
@@ -112,7 +126,7 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
     params = {
         "apiKey": api_key,
         "regions": "us",
-        "markets": "h2h,spreads",
+        "markets": "h2h,spreads,totals",
         "oddsFormat": "american",
         "dateFormat": "iso",
         "commenceTimeFrom": now_utc.isoformat().replace("+00:00", "Z"),
@@ -150,6 +164,9 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
                 "home_moneyline": snapshot["home_moneyline"],
                 "away_moneyline": snapshot["away_moneyline"],
                 "home_spread_line": snapshot.get("home_spread_line"),
+                "total_line": snapshot.get("total_line"),
+                "over_odds": snapshot.get("over_odds"),
+                "under_odds": snapshot.get("under_odds"),
                 "bookmaker": snapshot.get("bookmaker"),
                 "odds_last_updated": event.get("last_update"),
             }
