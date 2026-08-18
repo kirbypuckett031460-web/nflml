@@ -1,4 +1,4 @@
-"""Public-facing Streamlit app for published model picks."""
+"""Public-facing Streamlit app for published moneyline and totals picks."""
 
 from __future__ import annotations
 
@@ -12,9 +12,10 @@ import streamlit as st
 
 PUBLISHED_DIR = Path("published")
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
+PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 
-st.set_page_config(page_title="NFL Moneyline Picks", layout="wide")
+st.set_page_config(page_title="NFL Picks Board", layout="wide")
 st.markdown(
     """
 <style>
@@ -65,6 +66,8 @@ TEAM_COLORS = {
     "TB": "#D50A0A",
     "TEN": "#0C2340",
     "WAS": "#5A1414",
+    "OVER": "#1D4ED8",
+    "UNDER": "#B45309",
 }
 
 
@@ -76,10 +79,10 @@ def load_summary() -> dict:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_picks() -> pd.DataFrame:
-    if not PUBLIC_PICKS_PATH.exists():
+def load_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
         return pd.DataFrame()
-    return pd.read_csv(PUBLIC_PICKS_PATH, low_memory=False)
+    return pd.read_csv(path, low_memory=False)
 
 
 def american_odds_from_probability(probability: float) -> int:
@@ -92,7 +95,9 @@ def american_odds_from_probability(probability: float) -> int:
     return int(round(100.0 * (1.0 - probability) / probability))
 
 
-def odds_str(value: float | int) -> str:
+def odds_str(value: float | int | None) -> str:
+    if value is None or pd.isna(value):
+        return "-"
     number = int(round(float(value)))
     return f"+{number}" if number > 0 else str(number)
 
@@ -117,7 +122,7 @@ def format_game_time_et(row: pd.Series) -> str:
     return ""
 
 
-def build_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
+def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame = picks.copy()
     frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
     frame["Game Time (ET)"] = frame.apply(format_game_time_et, axis=1)
@@ -134,13 +139,60 @@ def build_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["edge_pct"] = np.where(
         pick_is_home, frame["edge_home_vs_market"] * 100.0, frame["edge_away_vs_market"] * 100.0
     )
-    if "recommended_confidence_pct" in frame.columns:
-        frame["confidence_pct"] = pd.to_numeric(frame["recommended_confidence_pct"], errors="coerce")
-    else:
-        frame["confidence_pct"] = frame["edge_pct"].map(edge_to_confidence)
+    frame["confidence_pct"] = (
+        pd.to_numeric(frame.get("recommended_confidence_pct"), errors="coerce")
+        if "recommended_confidence_pct" in frame.columns
+        else frame["edge_pct"].map(edge_to_confidence)
+    )
+    frame["confidence_pct"] = frame["confidence_pct"].fillna(frame["edge_pct"].map(edge_to_confidence))
+
     frame["Mkt"] = frame["pick_market_odds"].map(odds_str)
-    frame["Fair"] = pd.to_numeric(frame["fair_odds"], errors="coerce").fillna(0).map(odds_str)
+    frame["Fair"] = pd.to_numeric(frame["fair_odds"], errors="coerce").map(odds_str)
     frame["Pick"] = frame["pick_team"]
+    frame["Edge"] = frame["edge_pct"]
+    frame["Confidence"] = frame["confidence_pct"]
+    frame["Away"] = np.where(
+        frame["away_team_name"].notna() & frame["away_team_name"].astype(str).str.len().gt(0),
+        frame["away_team_name"],
+        frame["away_team"],
+    )
+    frame["Home"] = np.where(
+        frame["home_team_name"].notna() & frame["home_team_name"].astype(str).str.len().gt(0),
+        frame["home_team_name"],
+        frame["home_team"],
+    )
+    frame["slate_date"] = frame["gameday_dt"].dt.date
+    return frame.sort_values(["gameday_dt", "Away", "Home"]).reset_index(drop=True)
+
+
+def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
+    frame = picks.copy()
+    frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
+    frame["Game Time (ET)"] = frame.apply(format_game_time_et, axis=1)
+    pick_is_over = frame["recommended_total_side"].eq("OVER")
+    frame["Pick"] = np.where(pick_is_over, "OVER", "UNDER")
+    frame["pick_prob"] = np.where(pick_is_over, frame["model_over_prob"], frame["model_under_prob"])
+    frame["pick_market_odds"] = np.where(pick_is_over, frame["over_odds"], frame["under_odds"])
+    frame["fair_odds"] = np.where(
+        pick_is_over,
+        frame["fair_over_odds"] if "fair_over_odds" in frame.columns else frame["model_over_prob"].map(american_odds_from_probability),
+        frame["fair_under_odds"] if "fair_under_odds" in frame.columns else frame["model_under_prob"].map(american_odds_from_probability),
+    )
+    frame["edge_pct"] = np.where(
+        pick_is_over,
+        pd.to_numeric(frame["edge_over_vs_market"], errors="coerce") * 100.0,
+        pd.to_numeric(frame["edge_under_vs_market"], errors="coerce") * 100.0,
+    )
+    frame["edge_pct"] = frame["edge_pct"].fillna((frame["pick_prob"] - 0.5) * 100.0 * 2.0)
+    frame["confidence_pct"] = (
+        pd.to_numeric(frame.get("recommended_total_confidence_pct"), errors="coerce")
+        if "recommended_total_confidence_pct" in frame.columns
+        else frame["edge_pct"].map(edge_to_confidence)
+    )
+    frame["confidence_pct"] = frame["confidence_pct"].fillna(frame["edge_pct"].map(edge_to_confidence))
+    frame["Mkt"] = frame["pick_market_odds"].map(odds_str)
+    frame["Fair"] = pd.to_numeric(frame["fair_odds"], errors="coerce").map(odds_str)
+    frame["Total"] = pd.to_numeric(frame["total_line"], errors="coerce").map(lambda x: f"{x:.1f}" if pd.notna(x) else "-")
     frame["Edge"] = frame["edge_pct"]
     frame["Confidence"] = frame["confidence_pct"]
     frame["Away"] = np.where(
@@ -172,6 +224,30 @@ def _pick_style(value: str) -> str:
     )
 
 
+def _interpolate_rgb(low: tuple[int, int, int], high: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t_clamped = min(max(t, 0.0), 1.0)
+    return tuple(int(round(low[i] + (high[i] - low[i]) * t_clamped)) for i in range(3))
+
+
+def _edge_cell_style(value: float) -> str:
+    if pd.isna(value):
+        return ""
+    normalized = (float(value) + 12.0) / 24.0
+    if normalized < 0.5:
+        rgb = _interpolate_rgb((170, 40, 60), (185, 140, 50), normalized / 0.5)
+    else:
+        rgb = _interpolate_rgb((185, 140, 50), (22, 163, 74), (normalized - 0.5) / 0.5)
+    return f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); color: #F8FAFC; text-align: center;"
+
+
+def _confidence_cell_style(value: float) -> str:
+    if pd.isna(value):
+        return ""
+    normalized = float(value) / 100.0
+    rgb = _interpolate_rgb((95, 48, 89), (16, 185, 129), normalized)
+    return f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); color: #F8FAFC; text-align: center;"
+
+
 def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     styled = df.style
     styled = styled.set_table_styles(
@@ -186,61 +262,85 @@ def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
             },
         ]
     )
-    styled = styled.background_gradient(subset=["Edge"], cmap="RdYlGn")
-    styled = styled.background_gradient(subset=["Confidence"], cmap="RdYlGn")
+    styled = styled.map(_edge_cell_style, subset=["Edge"])
+    styled = styled.map(_confidence_cell_style, subset=["Confidence"])
     styled = styled.format({"Edge": "{:+.1f}%", "Confidence": "{:.1f}%"})
     styled = styled.map(_pick_style, subset=["Pick"])
-    styled = styled.set_properties(
-        subset=["Pick"],
-        **{"font-weight": "700", "text-align": "center"},
-    )
-    styled = styled.set_properties(
-        subset=["Mkt", "Fair", "Edge", "Confidence", "Game Time (ET)"],
-        **{"text-align": "center"},
-    )
-    styled = styled.set_properties(
-        subset=["Away", "Home"],
-        **{"font-weight": "600"},
-    )
+    center_cols = [col for col in ["Mkt", "Fair", "Edge", "Confidence", "Game Time (ET)", "Total"] if col in df.columns]
+    styled = styled.set_properties(subset=center_cols, **{"text-align": "center"})
+    name_cols = [col for col in ["Away", "Home"] if col in df.columns]
+    styled = styled.set_properties(subset=name_cols, **{"font-weight": "600"})
     return styled
 
 
-def render_record_bar(summary: dict) -> None:
-    tracking = summary.get("bet_tracking", {}) if summary else {}
-    previous_week = tracking.get("previous_week", {})
-    ytd = tracking.get("ytd", {})
-    season = tracking.get("tracking_season")
-    prev_week_num = tracking.get("previous_week_number")
+def render_table_safe(table_df: pd.DataFrame) -> None:
+    try:
+        st.dataframe(style_table(table_df), use_container_width=True, hide_index=True)
+    except Exception:
+        # Fallback rendering so styling issues never break the public app.
+        fallback = table_df.copy()
+        fallback["Edge"] = pd.to_numeric(fallback["Edge"], errors="coerce").map(
+            lambda x: f"{x:+.1f}%" if pd.notna(x) else "-"
+        )
+        fallback["Confidence"] = pd.to_numeric(fallback["Confidence"], errors="coerce").map(
+            lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
+        )
+        st.warning("Advanced table styling unavailable; showing fallback table.")
+        st.dataframe(fallback, use_container_width=True, hide_index=True)
 
-    c1, c2, c3 = st.columns(3)
-    prev_label = "Previous Week W-L"
-    if prev_week_num is not None:
-        prev_label = f"Week {int(prev_week_num)} W-L"
-    c1.metric(prev_label, previous_week.get("record", "0-0"), f"{previous_week.get('win_pct', 0):.1%}")
-    c2.metric("YTD W-L", ytd.get("record", "0-0"), f"{ytd.get('win_pct', 0):.1%}")
-    c3.metric("Tracking Season", str(season) if season else "N/A")
+
+def get_tracking(summary: dict, key: str) -> dict:
+    if key in summary:
+        return summary.get(key, {})
+    # Backward compatibility for older summary payloads.
+    if key == "moneyline_bet_tracking":
+        return summary.get("bet_tracking", {})
+    return {}
+
+
+def render_record_bar(summary: dict) -> None:
+    ml_tracking = get_tracking(summary, "moneyline_bet_tracking")
+    total_tracking = get_tracking(summary, "total_bet_tracking")
+
+    ml_prev = ml_tracking.get("previous_week", {})
+    ml_ytd = ml_tracking.get("ytd", {})
+    total_prev = total_tracking.get("previous_week", {})
+    total_ytd = total_tracking.get("ytd", {})
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Moneyline Prev Week", ml_prev.get("record", "0-0"), f"{ml_prev.get('win_pct', 0):.1%}")
+    c2.metric("Moneyline YTD", ml_ytd.get("record", "0-0"), f"{ml_ytd.get('win_pct', 0):.1%}")
+    c3.metric("Totals Prev Week", total_prev.get("record", "0-0"), f"{total_prev.get('win_pct', 0):.1%}")
+    c4.metric("Totals YTD", total_ytd.get("record", "0-0"), f"{total_ytd.get('win_pct', 0):.1%}")
 
 
 summary = load_summary()
-picks = load_picks()
+moneyline_picks = load_csv(PUBLIC_PICKS_PATH)
+totals_picks = load_csv(PUBLIC_TOTALS_PATH)
 
 header_col, refresh_col = st.columns([6, 1])
 with header_col:
-    st.markdown("<div class='title-row'><h1>NFL Moneyline Picks</h1></div>", unsafe_allow_html=True)
+    st.markdown("<div class='title-row'><h1>NFL Betting Picks Board</h1></div>", unsafe_allow_html=True)
 with refresh_col:
     if st.button("Refresh"):
         st.cache_data.clear()
         st.rerun()
 
-if picks.empty:
+if moneyline_picks.empty and totals_picks.empty:
     st.info("No published predictions found yet.")
 else:
     render_record_bar(summary)
-    display = build_display_frame(picks)
-    available_slates = [d for d in display["slate_date"].dropna().unique().tolist() if pd.notna(d)]
-    available_slates = sorted(available_slates)
+    ml_display = build_moneyline_display_frame(moneyline_picks) if not moneyline_picks.empty else pd.DataFrame()
+    totals_display = build_totals_display_frame(totals_picks) if not totals_picks.empty else pd.DataFrame()
 
+    slate_values = []
+    if not ml_display.empty:
+        slate_values.extend(ml_display["slate_date"].dropna().tolist())
+    if not totals_display.empty:
+        slate_values.extend(totals_display["slate_date"].dropna().tolist())
+    available_slates = sorted(set(slate_values))
     selected_slate = available_slates[0] if available_slates else None
+
     if available_slates:
         selected_slate = st.selectbox(
             "Slate Date",
@@ -254,43 +354,59 @@ else:
             unsafe_allow_html=True,
         )
 
-    if selected_slate is not None:
-        slate_frame = display[display["slate_date"] == selected_slate].copy()
-    else:
-        slate_frame = display.copy()
+    moneyline_tab, totals_tab = st.tabs(["Moneyline Picks", "Over/Under Picks"])
 
-    table_frame = slate_frame[
-        ["Game Time (ET)", "Away", "Home", "Mkt", "Fair", "Pick", "Edge", "Confidence"]
-    ].copy()
+    with moneyline_tab:
+        if ml_display.empty:
+            st.caption("No moneyline picks available for this feed.")
+        else:
+            slate_frame = (
+                ml_display[ml_display["slate_date"] == selected_slate].copy()
+                if selected_slate is not None
+                else ml_display.copy()
+            )
+            table_frame = slate_frame[
+                ["Game Time (ET)", "Away", "Home", "Mkt", "Fair", "Pick", "Edge", "Confidence"]
+            ].copy()
+            render_table_safe(table_frame)
+            st.subheader("Top Moneyline Plays")
+            top = slate_frame[slate_frame["edge_pct"] > 0].copy()
+            top = top.sort_values(["confidence_pct", "edge_pct"], ascending=False).head(5)
+            if top.empty:
+                st.caption("No positive-edge moneyline plays on this slate.")
+            else:
+                render_table_safe(top[["Game Time (ET)", "Away", "Home", "Mkt", "Fair", "Pick", "Edge", "Confidence"]])
 
-    styled_main = style_table(table_frame)
-    st.dataframe(
-        styled_main,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    st.subheader("Top Plays")
-    top = slate_frame[slate_frame["edge_pct"] > 0].copy()
-    top = top.sort_values(["confidence_pct", "edge_pct"], ascending=False).head(5)
-    if top.empty:
-        st.caption("No positive-edge plays on this slate.")
-    else:
-        top_table = top[["Game Time (ET)", "Away", "Home", "Mkt", "Fair", "Pick", "Edge", "Confidence"]].copy()
-        styled_top = style_table(top_table)
-        st.dataframe(
-            styled_top,
-            use_container_width=True,
-            hide_index=True,
-        )
+    with totals_tab:
+        if totals_display.empty:
+            st.caption("No totals picks available for this feed.")
+        else:
+            slate_frame = (
+                totals_display[totals_display["slate_date"] == selected_slate].copy()
+                if selected_slate is not None
+                else totals_display.copy()
+            )
+            table_frame = slate_frame[
+                ["Game Time (ET)", "Away", "Home", "Total", "Mkt", "Fair", "Pick", "Edge", "Confidence"]
+            ].copy()
+            render_table_safe(table_frame)
+            st.subheader("Top Totals Plays")
+            top = slate_frame[slate_frame["edge_pct"] > 0].copy()
+            top = top.sort_values(["confidence_pct", "edge_pct"], ascending=False).head(5)
+            if top.empty:
+                st.caption("No positive-edge totals plays on this slate.")
+            else:
+                render_table_safe(
+                    top[["Game Time (ET)", "Away", "Home", "Total", "Mkt", "Fair", "Pick", "Edge", "Confidence"]]
+                )
 
 if summary:
-    tracking = summary.get("bet_tracking", {})
-    ytd = tracking.get("ytd", {})
-    prev = tracking.get("previous_week", {})
+    ml_tracking = get_tracking(summary, "moneyline_bet_tracking")
+    total_tracking = get_tracking(summary, "total_bet_tracking")
+    ml_ytd = (ml_tracking.get("ytd") or {}).get("record", "0-0")
+    total_ytd = (total_tracking.get("ytd") or {}).get("record", "0-0")
     st.caption(
         f"Last updated: {summary.get('updated_at_et', 'n/a')} | "
         f"Source: {summary.get('upcoming_source', 'n/a')} | "
-        f"Prev Week: {prev.get('record', '0-0')} | "
-        f"YTD: {ytd.get('record', '0-0')}"
+        f"Moneyline YTD: {ml_ytd} | Totals YTD: {total_ytd}"
     )

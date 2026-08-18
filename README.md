@@ -3,6 +3,7 @@
 This repository provides:
 
 - a Python NFL moneyline model
+- a Python NFL over/under model
 - an **admin Streamlit app** to run the model and trigger CI
 - a **public Streamlit app** for website embedding
 - a daily GitHub Actions job at **noon ET** that refreshes published picks
@@ -13,7 +14,7 @@ This repository provides:
 2. Upcoming lines are pulled from **The Odds API** using your `ODDS_API_KEY`.
 3. The model writes:
    - private artifacts to `artifacts/` (ignored)
-   - public feed files to `published/` (committed by CI), including bet tracking
+   - public feed files to `published/` (committed by CI), including moneyline + totals bet tracking
 4. The public app (`app.py`) reads from `published/`.
 5. The admin app (`admin_app.py`) can:
    - run the model immediately
@@ -22,8 +23,10 @@ This repository provides:
 ### Published outputs
 
 - `published/public_predictions.csv` - upcoming slate picks
-- `published/public_summary.json` - update metadata + previous week and YTD W-L summaries
-- `published/bet_history.csv` - graded historical model bets used for record tracking
+- `published/public_totals_predictions.csv` - upcoming O/U picks
+- `published/public_summary.json` - update metadata + previous week and YTD W-L summaries for both moneyline and totals
+- `published/bet_history.csv` - graded historical moneyline model bets used for record tracking
+- `published/bet_history_totals.csv` - graded historical totals model bets used for record tracking
 
 ## Files
 
