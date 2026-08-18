@@ -122,6 +122,80 @@ def format_game_time_et(row: pd.Series) -> str:
     return ""
 
 
+def _normalize_week(value: object) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _make_week_key(season: object, week: object) -> str:
+    season_i = _normalize_week(season)
+    week_i = _normalize_week(week)
+    if season_i is None or week_i is None:
+        return "unknown-week"
+    return f"{season_i}-W{week_i:02d}"
+
+
+def _format_week_label(week_key: str, include_season: bool) -> str:
+    if week_key == "unknown-week":
+        return "Unknown Week"
+    season_str, week_token = week_key.split("-W")
+    week_num = int(week_token)
+    if include_season:
+        return f"{season_str} Week {week_num}"
+    return f"Week {week_num}"
+
+
+def choose_default_week_key(
+    week_keys: list[str],
+    moneyline_display: pd.DataFrame,
+    totals_display: pd.DataFrame,
+) -> tuple[str | None, int]:
+    """Choose the nearest upcoming week, else most recent available week."""
+    if not week_keys:
+        return None, 0
+
+    frames: list[pd.DataFrame] = []
+    if not moneyline_display.empty:
+        frames.append(moneyline_display[["week_key", "gameday_dt"]].copy())
+    if not totals_display.empty:
+        frames.append(totals_display[["week_key", "gameday_dt"]].copy())
+
+    if not frames:
+        return week_keys[0], 0
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[
+        combined["week_key"].notna()
+        & combined["gameday_dt"].notna()
+        & combined["week_key"].isin(week_keys)
+        & (combined["week_key"] != "unknown-week")
+    ].copy()
+
+    if combined.empty:
+        return week_keys[0], 0
+
+    combined["game_date"] = pd.to_datetime(combined["gameday_dt"], errors="coerce").dt.date
+    week_start = combined.groupby("week_key", dropna=False)["game_date"].min()
+    week_start = week_start.dropna()
+    if week_start.empty:
+        return week_keys[0], 0
+
+    today_et = pd.Timestamp.now(tz="America/New_York").date()
+    upcoming = week_start[week_start >= today_et]
+    if not upcoming.empty:
+        selected = str(upcoming.sort_values().index[0])
+    else:
+        selected = str(week_start.sort_values().index[-1])
+
+    if selected in week_keys:
+        return selected, week_keys.index(selected)
+    return week_keys[0], 0
+
+
 def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame = picks.copy()
     frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
@@ -162,6 +236,9 @@ def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
         frame["home_team"],
     )
     frame["slate_date"] = frame["gameday_dt"].dt.date
+    frame["season_num"] = pd.to_numeric(frame["season"], errors="coerce")
+    frame["week_num"] = pd.to_numeric(frame["week"], errors="coerce")
+    frame["week_key"] = frame.apply(lambda row: _make_week_key(row["season_num"], row["week_num"]), axis=1)
     return frame.sort_values(["gameday_dt", "Away", "Home"]).reset_index(drop=True)
 
 
@@ -206,6 +283,9 @@ def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
         frame["home_team"],
     )
     frame["slate_date"] = frame["gameday_dt"].dt.date
+    frame["season_num"] = pd.to_numeric(frame["season"], errors="coerce")
+    frame["week_num"] = pd.to_numeric(frame["week"], errors="coerce")
+    frame["week_key"] = frame.apply(lambda row: _make_week_key(row["season_num"], row["week_num"]), axis=1)
     return frame.sort_values(["gameday_dt", "Away", "Home"]).reset_index(drop=True)
 
 
@@ -333,24 +413,33 @@ else:
     ml_display = build_moneyline_display_frame(moneyline_picks) if not moneyline_picks.empty else pd.DataFrame()
     totals_display = build_totals_display_frame(totals_picks) if not totals_picks.empty else pd.DataFrame()
 
-    slate_values = []
+    week_keys: list[str] = []
     if not ml_display.empty:
-        slate_values.extend(ml_display["slate_date"].dropna().tolist())
+        week_keys.extend(ml_display["week_key"].dropna().astype(str).tolist())
     if not totals_display.empty:
-        slate_values.extend(totals_display["slate_date"].dropna().tolist())
-    available_slates = sorted(set(slate_values))
-    selected_slate = available_slates[0] if available_slates else None
+        week_keys.extend(totals_display["week_key"].dropna().astype(str).tolist())
+    week_keys = sorted(set(week_keys))
+    if "unknown-week" in week_keys and len(week_keys) > 1:
+        week_keys = [item for item in week_keys if item != "unknown-week"] + ["unknown-week"]
 
-    if available_slates:
-        selected_slate = st.selectbox(
-            "Slate Date",
-            options=available_slates,
-            format_func=lambda x: pd.to_datetime(x).strftime("%A, %b %d, %Y"),
-            index=0,
+    include_season_in_label = len(
+        {
+            key.split("-W")[0]
+            for key in week_keys
+            if key != "unknown-week" and "-W" in key
+        }
+    ) > 1
+    selected_week_key, default_week_index = choose_default_week_key(week_keys, ml_display, totals_display)
+    if week_keys:
+        selected_week_key = st.selectbox(
+            "Schedule Week",
+            options=week_keys,
+            format_func=lambda x: _format_week_label(x, include_season_in_label),
+            index=default_week_index,
             label_visibility="collapsed",
         )
         st.markdown(
-            f"<div class='muted'>Slate Date: {pd.to_datetime(selected_slate).strftime('%A, %b %d, %Y')}</div>",
+            f"<div class='muted'>Slate: {_format_week_label(selected_week_key, include_season_in_label)}</div>",
             unsafe_allow_html=True,
         )
 
@@ -361,8 +450,8 @@ else:
             st.caption("No moneyline picks available for this feed.")
         else:
             slate_frame = (
-                ml_display[ml_display["slate_date"] == selected_slate].copy()
-                if selected_slate is not None
+                ml_display[ml_display["week_key"] == selected_week_key].copy()
+                if selected_week_key is not None
                 else ml_display.copy()
             )
             table_frame = slate_frame[
@@ -382,8 +471,8 @@ else:
             st.caption("No totals picks available for this feed.")
         else:
             slate_frame = (
-                totals_display[totals_display["slate_date"] == selected_slate].copy()
-                if selected_slate is not None
+                totals_display[totals_display["week_key"] == selected_week_key].copy()
+                if selected_week_key is not None
                 else totals_display.copy()
             )
             table_frame = slate_frame[
