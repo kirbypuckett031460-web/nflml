@@ -149,6 +149,53 @@ def _format_week_label(week_key: str, include_season: bool) -> str:
     return f"Week {week_num}"
 
 
+def choose_default_week_key(
+    week_keys: list[str],
+    moneyline_display: pd.DataFrame,
+    totals_display: pd.DataFrame,
+) -> tuple[str | None, int]:
+    """Choose the nearest upcoming week, else most recent available week."""
+    if not week_keys:
+        return None, 0
+
+    frames: list[pd.DataFrame] = []
+    if not moneyline_display.empty:
+        frames.append(moneyline_display[["week_key", "gameday_dt"]].copy())
+    if not totals_display.empty:
+        frames.append(totals_display[["week_key", "gameday_dt"]].copy())
+
+    if not frames:
+        return week_keys[0], 0
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[
+        combined["week_key"].notna()
+        & combined["gameday_dt"].notna()
+        & combined["week_key"].isin(week_keys)
+        & (combined["week_key"] != "unknown-week")
+    ].copy()
+
+    if combined.empty:
+        return week_keys[0], 0
+
+    combined["game_date"] = pd.to_datetime(combined["gameday_dt"], errors="coerce").dt.date
+    week_start = combined.groupby("week_key", dropna=False)["game_date"].min()
+    week_start = week_start.dropna()
+    if week_start.empty:
+        return week_keys[0], 0
+
+    today_et = pd.Timestamp.now(tz="America/New_York").date()
+    upcoming = week_start[week_start >= today_et]
+    if not upcoming.empty:
+        selected = str(upcoming.sort_values().index[0])
+    else:
+        selected = str(week_start.sort_values().index[-1])
+
+    if selected in week_keys:
+        return selected, week_keys.index(selected)
+    return week_keys[0], 0
+
+
 def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame = picks.copy()
     frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
@@ -382,13 +429,13 @@ else:
             if key != "unknown-week" and "-W" in key
         }
     ) > 1
-    selected_week_key = week_keys[0] if week_keys else None
+    selected_week_key, default_week_index = choose_default_week_key(week_keys, ml_display, totals_display)
     if week_keys:
         selected_week_key = st.selectbox(
             "Schedule Week",
             options=week_keys,
             format_func=lambda x: _format_week_label(x, include_season_in_label),
-            index=0,
+            index=default_week_index,
             label_visibility="collapsed",
         )
         st.markdown(
