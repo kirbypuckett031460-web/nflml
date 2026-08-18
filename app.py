@@ -1,4 +1,4 @@
-"""Streamlit app for NFL moneyline model outputs."""
+"""Public-facing Streamlit app for published model picks."""
 
 from __future__ import annotations
 
@@ -8,139 +8,70 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from train_model import main as train_pipeline
+PUBLISHED_DIR = Path("published")
+PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
+PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 
-ARTIFACT_DIR = Path("artifacts")
-METRICS_PATH = ARTIFACT_DIR / "metrics.json"
-UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
-HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
-
-st.set_page_config(page_title="NFL Moneyline Model", layout="wide")
-st.title("NFL Moneyline Betting Model")
-st.caption("Model: logistic regression trained on nflverse game + odds history.")
+st.set_page_config(page_title="NFL Moneyline Picks", layout="wide")
+st.title("NFL Moneyline Model Picks")
+st.caption("Public feed of model outputs. Updated by admin runs + GitHub CI.")
 
 
-@st.cache_data(show_spinner=False)
-def load_metrics() -> dict:
-    if not METRICS_PATH.exists():
+@st.cache_data(ttl=300, show_spinner=False)
+def load_summary() -> dict:
+    if not PUBLIC_SUMMARY_PATH.exists():
         return {}
-    return json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+    return json.loads(PUBLIC_SUMMARY_PATH.read_text(encoding="utf-8"))
 
 
-@st.cache_data(show_spinner=False)
-def load_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
+@st.cache_data(ttl=300, show_spinner=False)
+def load_picks() -> pd.DataFrame:
+    if not PUBLIC_PICKS_PATH.exists():
         return pd.DataFrame()
-    return pd.read_csv(path, parse_dates=["gameday"], low_memory=False)
+    return pd.read_csv(PUBLIC_PICKS_PATH, low_memory=False)
 
 
-if not METRICS_PATH.exists() or not UPCOMING_PATH.exists():
-    st.warning("No model artifacts found yet. Run training to generate them.")
-    if st.button("Train model now"):
-        with st.spinner("Training model and generating outputs..."):
-            train_pipeline()
-        st.success("Training complete. Refreshing data...")
-        st.cache_data.clear()
-        st.rerun()
+summary = load_summary()
+picks = load_picks()
 
-metrics = load_metrics()
-upcoming = load_csv(UPCOMING_PATH)
-holdout = load_csv(HOLDOUT_PATH)
+if summary:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Upcoming games", f"{summary.get('num_upcoming_games', 0)}")
+    c2.metric("Holdout accuracy", f"{summary.get('holdout_accuracy', 0):.3f}")
+    c3.metric("Holdout ROC-AUC", f"{summary.get('holdout_roc_auc', 0):.3f}")
+    c4.metric("Source", summary.get("upcoming_source", "n/a"))
+    st.caption(f"Last updated (ET): {summary.get('updated_at_et', 'n/a')}")
 
-if metrics:
-    cols = st.columns(4)
-    cols[0].metric("Holdout accuracy", f"{metrics.get('accuracy', 0):.3f}")
-    cols[1].metric("Holdout ROC-AUC", f"{metrics.get('roc_auc', 0):.3f}")
-    cols[2].metric("Holdout Brier", f"{metrics.get('brier_score', 0):.3f}")
-    cols[3].metric("Holdout log loss", f"{metrics.get('log_loss', 0):.3f}")
-    st.caption(
-        f"Train rows: {metrics.get('train_rows', 0):,} | "
-        f"Test rows: {metrics.get('test_rows', 0):,} | "
-        f"Latest test season: {metrics.get('latest_test_season', 'n/a')}"
-    )
-
-st.subheader("Upcoming moneyline edges")
-
-if upcoming.empty:
-    st.info("No upcoming games with posted moneylines found in the source feed.")
+if picks.empty:
+    st.info("No published predictions found yet.")
 else:
-    min_edge = st.slider("Minimum edge vs market (absolute)", 0.0, 0.15, 0.02, 0.005)
-    min_ev = st.slider("Minimum EV per $1 wagered", -0.10, 0.20, 0.00, 0.01)
+    min_edge = st.slider("Minimum absolute edge", 0.0, 0.20, 0.02, 0.005)
+    min_ev = st.slider("Minimum expected value per $1", -0.10, 0.30, 0.00, 0.01)
 
-    seasons = sorted(upcoming["season"].dropna().unique().tolist())
-    selected_seasons = st.multiselect("Season", options=seasons, default=seasons[-1:] if seasons else [])
+    frame = picks.copy()
+    frame["abs_best_edge"] = frame[["edge_home_vs_market", "edge_away_vs_market"]].abs().max(axis=1)
+    frame = frame[(frame["abs_best_edge"] >= min_edge) & (frame["recommended_ev_per_dollar"] >= min_ev)]
+    frame["matchup"] = frame["away_team"] + " @ " + frame["home_team"]
+    frame["model_home_win_prob"] = frame["model_home_win_prob"].map(lambda x: f"{x:.2%}")
+    frame["edge_home_vs_market"] = frame["edge_home_vs_market"].map(lambda x: f"{x:+.2%}")
+    frame["edge_away_vs_market"] = frame["edge_away_vs_market"].map(lambda x: f"{x:+.2%}")
+    frame["recommended_ev_per_dollar"] = frame["recommended_ev_per_dollar"].map(lambda x: f"{x:+.3f}")
 
-    filtered = upcoming.copy()
-    if selected_seasons:
-        filtered = filtered[filtered["season"].isin(selected_seasons)]
-
-    filtered["abs_best_edge"] = filtered[["edge_home_vs_market", "edge_away_vs_market"]].abs().max(axis=1)
-    filtered = filtered[
-        (filtered["abs_best_edge"] >= min_edge)
-        & (filtered["recommended_ev_per_dollar"] >= min_ev)
-    ].copy()
-
-    filtered["matchup"] = filtered["away_team"] + " @ " + filtered["home_team"]
-    filtered["model_home_win_prob"] = filtered["model_home_win_prob"].map(lambda x: f"{x:.2%}")
-    filtered["market_home_prob"] = filtered["market_home_prob"].map(lambda x: f"{x:.2%}")
-    filtered["edge_home_vs_market"] = filtered["edge_home_vs_market"].map(lambda x: f"{x:+.2%}")
-    filtered["edge_away_vs_market"] = filtered["edge_away_vs_market"].map(lambda x: f"{x:+.2%}")
-    filtered["recommended_ev_per_dollar"] = filtered["recommended_ev_per_dollar"].map(lambda x: f"{x:+.3f}")
-    filtered["gameday"] = pd.to_datetime(filtered["gameday"]).dt.strftime("%Y-%m-%d")
-
-    display_cols = [
-        "gameday",
-        "season",
-        "week",
-        "matchup",
-        "home_moneyline",
-        "away_moneyline",
-        "model_home_win_prob",
-        "market_home_prob",
-        "edge_home_vs_market",
-        "edge_away_vs_market",
-        "recommended_side",
-        "recommended_ev_per_dollar",
-    ]
-    st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
-
-st.subheader("Backtest sample (holdout season)")
-if holdout.empty:
-    st.info("No holdout sample available yet.")
-else:
-    sample = holdout.copy()
-    sample["matchup"] = sample["away_team"] + " @ " + sample["home_team"]
-    sample["gameday"] = pd.to_datetime(sample["gameday"]).dt.strftime("%Y-%m-%d")
-    sample["model_home_win_prob"] = sample["model_home_win_prob"].map(lambda x: f"{x:.2%}")
-    sample["market_home_prob"] = sample["market_home_prob"].map(lambda x: f"{x:.2%}")
-    sample["best_ev_per_dollar"] = sample["best_ev_per_dollar"].map(lambda x: f"{x:+.3f}")
     st.dataframe(
-        sample[
+        frame[
             [
-                "gameday",
-                "season",
-                "week",
+                "kickoff_et",
                 "matchup",
+                "bookmaker",
                 "home_moneyline",
                 "away_moneyline",
                 "model_home_win_prob",
-                "market_home_prob",
-                "best_side",
-                "best_ev_per_dollar",
+                "edge_home_vs_market",
+                "edge_away_vs_market",
+                "recommended_side",
+                "recommended_ev_per_dollar",
             ]
         ],
         use_container_width=True,
         hide_index=True,
     )
-
-st.subheader("Website embed snippet")
-st.code(
-    """<iframe
-  src="https://YOUR-STREAMLIT-APP-URL"
-  width="100%"
-  height="1000"
-  style="border:0;"
-  loading="lazy"
-></iframe>""",
-    language="html",
-)
