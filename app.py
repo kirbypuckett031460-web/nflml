@@ -172,6 +172,35 @@ def _pick_style(value: str) -> str:
     )
 
 
+def _interpolate_rgb(low: tuple[int, int, int], high: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t_clamped = min(max(t, 0.0), 1.0)
+    return tuple(
+        int(round(low[i] + (high[i] - low[i]) * t_clamped))
+        for i in range(3)
+    )
+
+
+def _edge_cell_style(value: float) -> str:
+    if pd.isna(value):
+        return ""
+    # Map edge from -12%..+12% into red..yellow..green.
+    normalized = (float(value) + 12.0) / 24.0
+    if normalized < 0.5:
+        rgb = _interpolate_rgb((170, 40, 60), (185, 140, 50), normalized / 0.5)
+    else:
+        rgb = _interpolate_rgb((185, 140, 50), (22, 163, 74), (normalized - 0.5) / 0.5)
+    return f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); color: #F8FAFC; text-align: center;"
+
+
+def _confidence_cell_style(value: float) -> str:
+    if pd.isna(value):
+        return ""
+    # Map confidence from 0..100 into muted purple..green.
+    normalized = float(value) / 100.0
+    rgb = _interpolate_rgb((95, 48, 89), (16, 185, 129), normalized)
+    return f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); color: #F8FAFC; text-align: center;"
+
+
 def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     styled = df.style
     styled = styled.set_table_styles(
@@ -186,8 +215,8 @@ def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
             },
         ]
     )
-    styled = styled.background_gradient(subset=["Edge"], cmap="RdYlGn")
-    styled = styled.background_gradient(subset=["Confidence"], cmap="RdYlGn")
+    styled = styled.map(_edge_cell_style, subset=["Edge"])
+    styled = styled.map(_confidence_cell_style, subset=["Confidence"])
     styled = styled.format({"Edge": "{:+.1f}%", "Confidence": "{:.1f}%"})
     styled = styled.map(_pick_style, subset=["Pick"])
     styled = styled.set_properties(
