@@ -160,8 +160,14 @@ def build_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
 def _pick_style(value: str) -> str:
     code = str(value).upper()
     color = TEAM_COLORS.get(code, "#7C3AED")
+    hex_color = color.lstrip("#")
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    luminance = (0.299 * r) + (0.587 * g) + (0.114 * b)
+    text_color = "#111827" if luminance > 175 else "#FFFFFF"
     return (
-        f"background-color: {color}; color: white; font-weight: 800; text-align: center; "
+        f"background-color: {color}; color: {text_color}; font-weight: 800; text-align: center; "
         "letter-spacing: 0.2px;"
     )
 

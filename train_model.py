@@ -167,7 +167,8 @@ def build_bet_tracking_summary(bet_history: pd.DataFrame) -> dict[str, object]:
 
     weeks = sorted([int(w) for w in season_df["week_num"].dropna().unique().tolist()])
     latest_graded_week = weeks[-1] if weeks else None
-    previous_week = weeks[-2] if len(weeks) >= 2 else latest_graded_week
+    previous_week = latest_graded_week
+    prior_week = weeks[-2] if len(weeks) >= 2 else None
 
     previous_week_df = (
         season_df[season_df["week_num"] == previous_week].copy()
@@ -190,6 +191,7 @@ def build_bet_tracking_summary(bet_history: pd.DataFrame) -> dict[str, object]:
         "tracking_season": tracking_season,
         "latest_graded_week": latest_graded_week,
         "previous_week_number": previous_week,
+        "prior_week_number": prior_week,
         "previous_week": _build_record_summary(previous_week_df),
         "ytd": _build_record_summary(ytd_df),
         "weekly_records": weekly_records,
@@ -304,7 +306,18 @@ def export_public_outputs(
             ]
         ).to_csv(PUBLIC_BET_HISTORY_PATH, index=False)
     else:
-        bet_public = bet_history[
+        tracking_season = bet_tracking_summary.get("tracking_season")
+        bet_public_source = bet_history.copy()
+        if tracking_season is not None:
+            bet_public_source = bet_public_source[
+                pd.to_numeric(bet_public_source["season"], errors="coerce").eq(float(tracking_season))
+            ].copy()
+        if "game_type" in bet_public_source.columns:
+            reg_only = bet_public_source[bet_public_source["game_type"] == "REG"].copy()
+            if not reg_only.empty:
+                bet_public_source = reg_only
+
+        bet_public = bet_public_source[
             [
                 "gameday",
                 "season",
