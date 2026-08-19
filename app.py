@@ -437,11 +437,17 @@ def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         [
             {
                 "selector": "th",
-                "props": "background-color:#20263A; color:#E5E7EB; font-weight:700; text-align:center;",
+                "props": (
+                    "background-color:#20263A; color:#E5E7EB; font-weight:700; text-align:center; "
+                    "padding: 0.22rem 0.38rem; white-space: nowrap;"
+                ),
             },
             {
                 "selector": "td",
-                "props": "background-color:#121A2A; color:#E5E7EB; border-color:#263049;",
+                "props": (
+                    "background-color:#121A2A; color:#E5E7EB; border-color:#263049; "
+                    "text-align:center; padding: 0.18rem 0.35rem; white-space: nowrap;"
+                ),
             },
         ]
     )
@@ -449,9 +455,8 @@ def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     styled = styled.map(_confidence_cell_style, subset=["Confidence"])
     styled = styled.format({"Edge": "{:+.1f}%", "Confidence": "{:.1f}%"})
     styled = styled.map(_pick_style, subset=["Pick"])
-    center_cols = [col for col in ["Mkt", "Fair", "Edge", "Confidence", "Game Time (ET)", "Total"] if col in df.columns]
-    styled = styled.set_properties(subset=center_cols, **{"text-align": "center"})
-    name_cols = [col for col in ["Away", "Home"] if col in df.columns]
+    styled = styled.set_properties(**{"text-align": "center"})
+    name_cols = [col for col in ["Away", "Home", "Pick"] if col in df.columns]
     styled = styled.set_properties(subset=name_cols, **{"font-weight": "600"})
     return styled
 
@@ -466,6 +471,14 @@ def _table_height_for_rows(row_count: int) -> int:
 
 
 def render_table_safe(table_df: pd.DataFrame) -> None:
+    column_widths = {
+        col: st.column_config.TextColumn(col, width="small")
+        for col in table_df.columns
+    }
+    for col in ("Away", "Home", "Pick"):
+        if col in column_widths:
+            column_widths[col] = st.column_config.TextColumn(col, width="medium")
+
     table_height = _table_height_for_rows(len(table_df))
     try:
         st.dataframe(
@@ -473,6 +486,7 @@ def render_table_safe(table_df: pd.DataFrame) -> None:
             use_container_width=True,
             hide_index=True,
             height=table_height,
+            column_config=column_widths,
         )
     except Exception:
         # Fallback rendering so styling issues never break the public app.
@@ -489,6 +503,7 @@ def render_table_safe(table_df: pd.DataFrame) -> None:
             use_container_width=True,
             hide_index=True,
             height=table_height,
+            column_config=column_widths,
         )
 
 
