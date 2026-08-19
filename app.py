@@ -503,5 +503,5 @@ else:
 if summary:
     updated_et = format_last_updated_et(summary.get("updated_at_et"))
     st.caption(
-        f"Last updated (ET): {updated_et}"
+        f"Last updated: {updated_et}"
     )
