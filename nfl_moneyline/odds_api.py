@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 
 import pandas as pd
 import requests
@@ -47,6 +48,55 @@ TEAM_NAME_TO_ABBR = {
 }
 
 PREFERRED_BOOKMAKERS = [PRIMARY_BOOKMAKER, "draftkings", "betmgm", "caesars", "espnbet", "betrivers"]
+
+
+def _sanitize_error_text(value: object) -> str:
+    return re.sub(r"(apiKey=)[^&\\s]+", r"\1[REDACTED]", str(value))
+
+
+def _error_detail(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = response.text
+    payload_text = _sanitize_error_text(payload)
+    return f"{response.status_code} {response.reason}: {payload_text}"
+
+
+def _fetch_events_with_fallback(params: dict) -> list[dict]:
+    attempt_overrides = [
+        ("bookmaker_only", {"bookmakers": PRIMARY_BOOKMAKER, "markets": "h2h,spreads,totals"}),
+        ("all_books_full_markets", {"regions": "us", "markets": "h2h,spreads,totals"}),
+        ("all_books_no_totals", {"regions": "us", "markets": "h2h,spreads"}),
+        ("all_books_h2h_only", {"regions": "us", "markets": "h2h"}),
+    ]
+    attempt_errors: list[str] = []
+
+    for name, override in attempt_overrides:
+        merged = dict(params)
+        merged.pop("regions", None)
+        merged.pop("bookmakers", None)
+        merged.pop("markets", None)
+        merged.update(override)
+
+        response = requests.get(ODDS_API_URL, params=merged, timeout=30)
+        if response.ok:
+            return response.json()
+
+        detail = _error_detail(response)
+        attempt_errors.append(f"{name}: {detail}")
+
+        # 422 often means this parameter combination is not valid for the account/sport.
+        # Retry using progressively less restrictive combinations.
+        if response.status_code == 422:
+            continue
+
+        raise RuntimeError(f"Odds API request failed: {detail}")
+
+    raise RuntimeError(
+        "Odds API request failed after trying supported parameter combinations: "
+        + " | ".join(attempt_errors)
+    )
 
 
 def _parse_bookmaker_markets(bookmaker: dict, home_team_name: str, away_team_name: str) -> dict:
@@ -149,17 +199,12 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
     now_utc = datetime.now(timezone.utc)
     params = {
         "apiKey": api_key,
-        "regions": "us",
-        "bookmakers": PRIMARY_BOOKMAKER,
-        "markets": "h2h,spreads,totals",
         "oddsFormat": "american",
         "dateFormat": "iso",
         "commenceTimeFrom": now_utc.isoformat().replace("+00:00", "Z"),
         "commenceTimeTo": (now_utc + timedelta(days=days_ahead)).isoformat().replace("+00:00", "Z"),
     }
-    response = requests.get(ODDS_API_URL, params=params, timeout=30)
-    response.raise_for_status()
-    events = response.json()
+    events = _fetch_events_with_fallback(params)
 
     rows: list[dict] = []
     for source_order, event in enumerate(events, start=1):
