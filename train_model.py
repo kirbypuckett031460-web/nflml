@@ -215,12 +215,16 @@ def _build_record_summary(frame: pd.DataFrame) -> dict[str, float | int | str | 
     }
 
 
-def build_bet_tracking_summary(bet_history: pd.DataFrame) -> dict[str, object]:
+def build_bet_tracking_summary(
+    bet_history: pd.DataFrame,
+    tracking_season_override: int | None = None,
+) -> dict[str, object]:
     if bet_history.empty:
         return {
-            "tracking_season": None,
+            "tracking_season": tracking_season_override,
             "latest_graded_week": None,
             "previous_week_number": None,
+            "prior_week_number": None,
             "previous_week": _build_record_summary(pd.DataFrame()),
             "ytd": _build_record_summary(pd.DataFrame()),
             "weekly_records": [],
@@ -237,16 +241,31 @@ def build_bet_tracking_summary(bet_history: pd.DataFrame) -> dict[str, object]:
     graded = graded[graded["season"].notna()].copy()
     if graded.empty:
         return {
-            "tracking_season": None,
+            "tracking_season": tracking_season_override,
             "latest_graded_week": None,
             "previous_week_number": None,
+            "prior_week_number": None,
             "previous_week": _build_record_summary(pd.DataFrame()),
             "ytd": _build_record_summary(pd.DataFrame()),
             "weekly_records": [],
         }
 
-    tracking_season = int(graded["season"].max())
+    tracking_season = (
+        int(tracking_season_override)
+        if tracking_season_override is not None
+        else int(graded["season"].max())
+    )
     season_df = graded[graded["season"] == tracking_season].copy()
+    if season_df.empty:
+        return {
+            "tracking_season": tracking_season,
+            "latest_graded_week": None,
+            "previous_week_number": None,
+            "prior_week_number": None,
+            "previous_week": _build_record_summary(pd.DataFrame()),
+            "ytd": _build_record_summary(pd.DataFrame()),
+            "weekly_records": [],
+        }
 
     weeks = sorted([int(w) for w in season_df["week_num"].dropna().unique().tolist()])
     latest_graded_week = weeks[-1] if weeks else None
@@ -686,10 +705,22 @@ def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[st
         upcoming_totals_frame = upcoming_totals_frame[upcoming_totals_frame["total_line"].notna()].copy()
     upcoming_totals_scored = score_upcoming_totals(final_total_model, upcoming_totals_frame)
     metrics["upcoming_source"] = upcoming_source
+    tracking_season_override: int | None = None
+    if not upcoming_frame.empty and "season" in upcoming_frame.columns:
+        season_values = pd.to_numeric(upcoming_frame["season"], errors="coerce").dropna()
+        if not season_values.empty:
+            tracking_season_override = int(season_values.min())
+
     moneyline_bet_history = build_bet_tracking_frame(final_model, modeling_frame)
-    moneyline_tracking_summary = build_bet_tracking_summary(moneyline_bet_history)
+    moneyline_tracking_summary = build_bet_tracking_summary(
+        moneyline_bet_history,
+        tracking_season_override=tracking_season_override,
+    )
     total_bet_history = build_total_bet_tracking_frame(final_total_model, total_modeling_frame)
-    total_tracking_summary = build_bet_tracking_summary(total_bet_history)
+    total_tracking_summary = build_bet_tracking_summary(
+        total_bet_history,
+        tracking_season_override=tracking_season_override,
+    )
 
     with METRICS_PATH.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, sort_keys=True)
