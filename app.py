@@ -124,6 +124,13 @@ def format_game_time_et(row: pd.Series) -> str:
 
 def kickoff_sort_value(row: pd.Series) -> pd.Timestamp:
     """Build sortable kickoff timestamp (ET-local naive)."""
+    kickoff_raw = str(row.get("kickoff_et", "")).strip()
+    if kickoff_raw and kickoff_raw.lower() != "nan":
+        kickoff_cleaned = kickoff_raw.replace(" ET", "")
+        kickoff_parsed = pd.to_datetime(kickoff_cleaned, errors="coerce")
+        if pd.notna(kickoff_parsed):
+            return kickoff_parsed
+
     gameday_ts = pd.to_datetime(row.get("gameday"), errors="coerce")
     if pd.isna(gameday_ts):
         return pd.Timestamp.max
