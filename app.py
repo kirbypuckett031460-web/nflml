@@ -273,9 +273,7 @@ def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["week_key"] = frame.apply(lambda row: _make_week_key(row["season_num"], row["week_num"]), axis=1)
     if frame["source_order_num"].notna().any():
         frame["_source_rank"] = frame["source_order_num"].fillna(10**9)
-        frame = frame.sort_values(
-            ["season_num", "week_num", "_source_rank", "kickoff_sort_dt", "Away", "Home"]
-        ).drop(columns=["_source_rank"])
+        frame = frame.sort_values(["_source_rank", "kickoff_sort_dt", "Away", "Home"]).drop(columns=["_source_rank"])
     else:
         frame = frame.sort_values(["kickoff_sort_dt", "Away", "Home"])
     return frame.reset_index(drop=True)
@@ -329,9 +327,7 @@ def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["week_key"] = frame.apply(lambda row: _make_week_key(row["season_num"], row["week_num"]), axis=1)
     if frame["source_order_num"].notna().any():
         frame["_source_rank"] = frame["source_order_num"].fillna(10**9)
-        frame = frame.sort_values(
-            ["season_num", "week_num", "_source_rank", "kickoff_sort_dt", "Away", "Home"]
-        ).drop(columns=["_source_rank"])
+        frame = frame.sort_values(["_source_rank", "kickoff_sort_dt", "Away", "Home"]).drop(columns=["_source_rank"])
     else:
         frame = frame.sort_values(["kickoff_sort_dt", "Away", "Home"])
     return frame.reset_index(drop=True)

@@ -453,7 +453,7 @@ def export_public_outputs(
         if source_rank.notna().any():
             public = (
                 public.assign(_source_rank=source_rank.fillna(10**9))
-                .sort_values(["season", "week", "_source_rank", "gameday", "away_team", "home_team"])
+                .sort_values(["_source_rank", "gameday", "away_team", "home_team"])
                 .drop(columns=["_source_rank"])
             )
         else:
@@ -548,7 +548,7 @@ def export_public_outputs(
         if totals_source_rank.notna().any():
             public_totals = (
                 public_totals.assign(_source_rank=totals_source_rank.fillna(10**9))
-                .sort_values(["season", "week", "_source_rank", "gameday", "away_team", "home_team"])
+                .sort_values(["_source_rank", "gameday", "away_team", "home_team"])
                 .drop(columns=["_source_rank"])
             )
         else:

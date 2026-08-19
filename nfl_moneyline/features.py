@@ -297,4 +297,5 @@ def build_external_prediction_frame(
     if not rows:
         return pd.DataFrame()
 
-    return pd.DataFrame(rows).sort_values(["gameday", "game_id"]).reset_index(drop=True)
+    # Preserve upstream provider ordering (e.g. FanDuel listing order).
+    return pd.DataFrame(rows).reset_index(drop=True)
