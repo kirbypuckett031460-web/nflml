@@ -50,6 +50,11 @@ TEAM_NAME_TO_ABBR = {
 PREFERRED_BOOKMAKERS = [PRIMARY_BOOKMAKER, "draftkings", "betmgm", "caesars", "espnbet", "betrivers"]
 
 
+def _odds_api_time(dt: datetime) -> str:
+    """Format timestamps per Odds API requirement: YYYY-MM-DDTHH:MM:SSZ."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _sanitize_error_text(value: object) -> str:
     return re.sub(r"(apiKey=)[^&\\s]+", r"\1[REDACTED]", str(value))
 
@@ -201,8 +206,8 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
         "apiKey": api_key,
         "oddsFormat": "american",
         "dateFormat": "iso",
-        "commenceTimeFrom": now_utc.isoformat().replace("+00:00", "Z"),
-        "commenceTimeTo": (now_utc + timedelta(days=days_ahead)).isoformat().replace("+00:00", "Z"),
+        "commenceTimeFrom": _odds_api_time(now_utc),
+        "commenceTimeTo": _odds_api_time(now_utc + timedelta(days=days_ahead)),
     }
     events = _fetch_events_with_fallback(params)
 
