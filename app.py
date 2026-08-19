@@ -70,6 +70,55 @@ TEAM_COLORS = {
     "UNDER": "#DC2626",
 }
 
+ABBR_TO_TEAM_NAME = {
+    "ARI": "Arizona Cardinals",
+    "ATL": "Atlanta Falcons",
+    "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills",
+    "CAR": "Carolina Panthers",
+    "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals",
+    "CLE": "Cleveland Browns",
+    "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos",
+    "DET": "Detroit Lions",
+    "GB": "Green Bay Packers",
+    "HOU": "Houston Texans",
+    "IND": "Indianapolis Colts",
+    "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs",
+    "LA": "Los Angeles Rams",
+    "LAC": "Los Angeles Chargers",
+    "LV": "Las Vegas Raiders",
+    "MIA": "Miami Dolphins",
+    "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots",
+    "NO": "New Orleans Saints",
+    "NYG": "New York Giants",
+    "NYJ": "New York Jets",
+    "PHI": "Philadelphia Eagles",
+    "PIT": "Pittsburgh Steelers",
+    "SEA": "Seattle Seahawks",
+    "SF": "San Francisco 49ers",
+    "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans",
+    "WAS": "Washington Commanders",
+}
+
+TEAM_NAME_TO_ABBR = {name.upper(): abbr for abbr, name in ABBR_TO_TEAM_NAME.items()}
+
+
+def _display_team_name(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "-"
+    raw = str(value).strip()
+    if not raw:
+        return "-"
+    code = raw.upper()
+    if code in ABBR_TO_TEAM_NAME:
+        return ABBR_TO_TEAM_NAME[code]
+    return raw
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_summary() -> dict:
@@ -233,7 +282,12 @@ def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["kickoff_sort_dt"] = frame.apply(kickoff_sort_value, axis=1)
 
     pick_is_home = frame["recommended_side"].eq("HOME")
-    frame["pick_team"] = np.where(pick_is_home, frame["home_team"], frame["away_team"])
+    frame["pick_team"] = np.where(
+        pick_is_home,
+        frame.get("home_team_name", frame["home_team"]),
+        frame.get("away_team_name", frame["away_team"]),
+    )
+    frame["pick_team"] = frame["pick_team"].map(_display_team_name)
     frame["pick_prob"] = np.where(pick_is_home, frame["model_home_win_prob"], frame["model_away_win_prob"])
     frame["pick_market_odds"] = np.where(pick_is_home, frame["home_moneyline"], frame["away_moneyline"])
     frame["fair_odds"] = np.where(
@@ -266,6 +320,8 @@ def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
         frame["home_team_name"],
         frame["home_team"],
     )
+    frame["Away"] = frame["Away"].map(_display_team_name)
+    frame["Home"] = frame["Home"].map(_display_team_name)
     frame["slate_date"] = frame["gameday_dt"].dt.date
     frame["season_num"] = pd.to_numeric(frame["season"], errors="coerce")
     frame["week_num"] = pd.to_numeric(frame["week"], errors="coerce")
@@ -320,6 +376,8 @@ def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
         frame["home_team_name"],
         frame["home_team"],
     )
+    frame["Away"] = frame["Away"].map(_display_team_name)
+    frame["Home"] = frame["Home"].map(_display_team_name)
     frame["slate_date"] = frame["gameday_dt"].dt.date
     frame["season_num"] = pd.to_numeric(frame["season"], errors="coerce")
     frame["week_num"] = pd.to_numeric(frame["week"], errors="coerce")
@@ -334,7 +392,8 @@ def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
 
 
 def _pick_style(value: str) -> str:
-    code = str(value).upper()
+    label = str(value).strip()
+    code = TEAM_NAME_TO_ABBR.get(label.upper(), label.upper())
     color = TEAM_COLORS.get(code, "#7C3AED")
     hex_color = color.lstrip("#")
     r = int(hex_color[0:2], 16)
