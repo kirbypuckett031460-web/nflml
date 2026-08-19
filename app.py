@@ -439,11 +439,13 @@ def _interpolate_rgb(low: tuple[int, int, int], high: tuple[int, int, int], t: f
 def _edge_cell_style(value: float) -> str:
     if pd.isna(value):
         return ""
-    normalized = (float(value) + 12.0) / 24.0
-    if normalized < 0.5:
-        rgb = _interpolate_rgb((170, 40, 60), (185, 140, 50), normalized / 0.5)
+    max_abs_edge = 12.0
+    edge = min(max(float(value), -max_abs_edge), max_abs_edge)
+    neutral = (38, 52, 70)  # dark slate at ~0 edge
+    if edge < 0:
+        rgb = _interpolate_rgb(neutral, (220, 38, 38), abs(edge) / max_abs_edge)
     else:
-        rgb = _interpolate_rgb((185, 140, 50), (22, 163, 74), (normalized - 0.5) / 0.5)
+        rgb = _interpolate_rgb(neutral, (22, 163, 74), edge / max_abs_edge)
     return f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); color: #F8FAFC; text-align: center;"
 
 
