@@ -45,7 +45,7 @@ TEAM_NAME_TO_ABBR = {
     "Washington Commanders": "WAS",
 }
 
-PREFERRED_BOOKMAKERS = ["draftkings", "fanduel", "betmgm", "caesars", "espnbet", "betrivers"]
+PREFERRED_BOOKMAKERS = ["fanduel", "draftkings", "betmgm", "caesars", "espnbet", "betrivers"]
 
 
 def _parse_bookmaker_markets(bookmaker: dict, home_team_name: str, away_team_name: str) -> dict:
