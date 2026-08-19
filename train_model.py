@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -45,6 +46,11 @@ PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
+
+
+def sanitize_error_message(message: object) -> str:
+    text = str(message)
+    return re.sub(r"(apiKey=)[^&\\s]+", r"\1[REDACTED]", text)
 
 
 def score_upcoming_games(model: NFLMoneylineModel, frame: pd.DataFrame) -> pd.DataFrame:
@@ -725,12 +731,14 @@ def run_pipeline(
             elif not allow_odds_fallback:
                 raise RuntimeError("Odds API returned zero upcoming events; refusing fallback.")
         except Exception as exc:
+            safe_exc = sanitize_error_message(exc)
             if allow_odds_fallback:
-                print(f"Odds API fetch failed ({exc}). Falling back to nflverse upcoming rows.")
+                print(f"Odds API fetch failed ({safe_exc}). Falling back to nflverse upcoming rows.")
             else:
                 raise RuntimeError(
-                    f"Odds API fetch failed and fallback is disabled: {exc}"
-                ) from exc
+                    "Odds API fetch failed and fallback is disabled. "
+                    f"Details: {safe_exc}"
+                ) from None
 
     if upcoming_frame.empty:
         upcoming_frame = build_prediction_frame(feature_frame)
