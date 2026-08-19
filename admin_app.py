@@ -87,17 +87,80 @@ def trigger_workflow_dispatch() -> tuple[bool, str]:
     if not github_token or not github_repo:
         return False, "Set GITHUB_TOKEN and GITHUB_REPO in Streamlit secrets."
 
-    url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{github_workflow}/dispatches"
     headers = {
         "Authorization": f"Bearer {github_token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
     payload = {"ref": github_ref}
-    response = requests.post(url, headers=headers, json=payload, timeout=30)
-    if response.status_code == 204:
-        return True, "Workflow dispatch sent successfully."
-    return False, f"Dispatch failed ({response.status_code}): {response.text}"
+
+    workflow_value = str(github_workflow).strip()
+    if not workflow_value:
+        return False, "Set GITHUB_WORKFLOW_FILE in Streamlit secrets."
+
+    candidates = [workflow_value]
+    if "/" not in workflow_value:
+        candidates.append(f".github/workflows/{workflow_value}")
+    if workflow_value.endswith(".yml"):
+        candidates.append(workflow_value.replace(".yml", ".yaml"))
+        if "/" not in workflow_value:
+            candidates.append(f".github/workflows/{workflow_value.replace('.yml', '.yaml')}")
+    elif workflow_value.endswith(".yaml"):
+        candidates.append(workflow_value.replace(".yaml", ".yml"))
+        if "/" not in workflow_value:
+            candidates.append(f".github/workflows/{workflow_value.replace('.yaml', '.yml')}")
+
+    tried: list[str] = []
+    for workflow_id in dict.fromkeys(candidates):
+        tried.append(workflow_id)
+        url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_id}/dispatches"
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code == 204:
+            return True, f"Workflow dispatch sent successfully via '{workflow_id}'."
+        if response.status_code != 404:
+            return False, f"Dispatch failed ({response.status_code}): {response.text}"
+
+    # If direct ids/paths failed with 404, try resolving by listing workflows.
+    list_url = f"https://api.github.com/repos/{github_repo}/actions/workflows"
+    list_response = requests.get(list_url, headers=headers, timeout=30)
+    if list_response.status_code == 200:
+        body = list_response.json()
+        workflows = body.get("workflows", [])
+        workflow_lower = workflow_value.lower()
+        resolved = None
+        for item in workflows:
+            name = str(item.get("name", "")).lower()
+            path = str(item.get("path", "")).lower()
+            if (
+                workflow_lower == name
+                or workflow_lower == path
+                or workflow_lower == path.split("/")[-1]
+            ):
+                resolved = item
+                break
+        if resolved is not None:
+            workflow_id = resolved.get("id")
+            if workflow_id is not None:
+                url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_id}/dispatches"
+                response = requests.post(url, headers=headers, json=payload, timeout=30)
+                if response.status_code == 204:
+                    return True, (
+                        "Workflow dispatch sent successfully via resolved workflow id "
+                        f"({workflow_id})."
+                    )
+                return False, f"Dispatch failed ({response.status_code}): {response.text}"
+        return False, (
+            "Dispatch failed with 404. Could not resolve workflow from configured "
+            f"value '{workflow_value}'. Tried: {', '.join(tried)}. "
+            "Set GITHUB_WORKFLOW_FILE to exact path, e.g. "
+            "'.github/workflows/daily-model-update.yml'."
+        )
+
+    return False, (
+        "Dispatch failed with 404 and workflow list lookup failed "
+        f"({list_response.status_code}). Check GITHUB_REPO, token repo access, "
+        "and Actions permissions."
+    )
 
 
 col1, col2 = st.columns(2)
