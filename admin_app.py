@@ -63,6 +63,25 @@ if st.button("Log out"):
     st.session_state["admin_authenticated"] = False
     st.rerun()
 
+
+def normalize_repo_slug(raw_value: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+
+    # Accept full GitHub URLs like https://github.com/owner/repo(.git)
+    if "github.com" in value:
+        parsed = urlparse(value)
+        path = parsed.path if parsed.path else value.split("github.com", 1)[-1]
+        value = path.strip("/")
+
+    value = value.removesuffix(".git").strip("/")
+    parts = [part for part in value.split("/") if part]
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return value
+
+
 with st.expander("Configuration status", expanded=True):
     st.write("ADMIN_PASSPHRASE configured: yes")
     st.write(f"ODDS_API_KEY configured: {'yes' if odds_api_key else 'no'}")
@@ -83,24 +102,6 @@ def load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     return pd.read_csv(path, low_memory=False)
-
-
-def normalize_repo_slug(raw_value: str) -> str:
-    value = str(raw_value or "").strip()
-    if not value:
-        return ""
-
-    # Accept full GitHub URLs like https://github.com/owner/repo(.git)
-    if "github.com" in value:
-        parsed = urlparse(value)
-        path = parsed.path if parsed.path else value.split("github.com", 1)[-1]
-        value = path.strip("/")
-
-    value = value.removesuffix(".git").strip("/")
-    parts = [part for part in value.split("/") if part]
-    if len(parts) >= 2:
-        return f"{parts[0]}/{parts[1]}"
-    return value
 
 
 def trigger_workflow_dispatch() -> tuple[bool, str]:
