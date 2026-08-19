@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -67,6 +68,7 @@ with st.expander("Configuration status", expanded=True):
     st.write(f"ODDS_API_KEY configured: {'yes' if odds_api_key else 'no'}")
     st.write(f"GITHUB_TOKEN configured: {'yes' if github_token else 'no'}")
     st.write(f"GITHUB_REPO configured: {github_repo or 'no'}")
+    st.write(f"GITHUB_REPO resolved slug: {normalize_repo_slug(github_repo) or 'invalid/not set'}")
     st.write(f"GITHUB_WORKFLOW_FILE: {github_workflow}")
     st.write(f"GITHUB_REF: {github_ref}")
 
@@ -83,9 +85,35 @@ def load_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path, low_memory=False)
 
 
+def normalize_repo_slug(raw_value: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+
+    # Accept full GitHub URLs like https://github.com/owner/repo(.git)
+    if "github.com" in value:
+        parsed = urlparse(value)
+        path = parsed.path if parsed.path else value.split("github.com", 1)[-1]
+        value = path.strip("/")
+
+    value = value.removesuffix(".git").strip("/")
+    parts = [part for part in value.split("/") if part]
+    if len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}"
+    return value
+
+
 def trigger_workflow_dispatch() -> tuple[bool, str]:
     if not github_token or not github_repo:
         return False, "Set GITHUB_TOKEN and GITHUB_REPO in Streamlit secrets."
+
+    repo_slug = normalize_repo_slug(github_repo)
+    if "/" not in repo_slug:
+        return (
+            False,
+            "GITHUB_REPO format is invalid. Use 'owner/repo' "
+            "(or a full GitHub URL that contains that path).",
+        )
 
     headers = {
         "Authorization": f"Bearer {github_token}",
@@ -93,6 +121,19 @@ def trigger_workflow_dispatch() -> tuple[bool, str]:
         "X-GitHub-Api-Version": "2022-11-28",
     }
     payload = {"ref": github_ref}
+
+    # Preflight repo access check to provide clearer errors than workflow 404.
+    repo_url = f"https://api.github.com/repos/{repo_slug}"
+    repo_resp = requests.get(repo_url, headers=headers, timeout=30)
+    if repo_resp.status_code != 200:
+        if repo_resp.status_code == 404:
+            return (
+                False,
+                "Repository not accessible (404). Check GITHUB_REPO, repo visibility, "
+                "and PAT access. Resolved repo slug: "
+                f"'{repo_slug}'.",
+            )
+        return False, f"Repository check failed ({repo_resp.status_code}): {repo_resp.text}"
 
     workflow_value = str(github_workflow).strip()
     if not workflow_value:
@@ -113,7 +154,7 @@ def trigger_workflow_dispatch() -> tuple[bool, str]:
     tried: list[str] = []
     for workflow_id in dict.fromkeys(candidates):
         tried.append(workflow_id)
-        url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_id}/dispatches"
+        url = f"https://api.github.com/repos/{repo_slug}/actions/workflows/{workflow_id}/dispatches"
         response = requests.post(url, headers=headers, json=payload, timeout=30)
         if response.status_code == 204:
             return True, f"Workflow dispatch sent successfully via '{workflow_id}'."
@@ -121,7 +162,7 @@ def trigger_workflow_dispatch() -> tuple[bool, str]:
             return False, f"Dispatch failed ({response.status_code}): {response.text}"
 
     # If direct ids/paths failed with 404, try resolving by listing workflows.
-    list_url = f"https://api.github.com/repos/{github_repo}/actions/workflows"
+    list_url = f"https://api.github.com/repos/{repo_slug}/actions/workflows"
     list_response = requests.get(list_url, headers=headers, timeout=30)
     if list_response.status_code == 200:
         body = list_response.json()
@@ -141,7 +182,7 @@ def trigger_workflow_dispatch() -> tuple[bool, str]:
         if resolved is not None:
             workflow_id = resolved.get("id")
             if workflow_id is not None:
-                url = f"https://api.github.com/repos/{github_repo}/actions/workflows/{workflow_id}/dispatches"
+                url = f"https://api.github.com/repos/{repo_slug}/actions/workflows/{workflow_id}/dispatches"
                 response = requests.post(url, headers=headers, json=payload, timeout=30)
                 if response.status_code == 204:
                     return True, (
@@ -158,8 +199,8 @@ def trigger_workflow_dispatch() -> tuple[bool, str]:
 
     return False, (
         "Dispatch failed with 404 and workflow list lookup failed "
-        f"({list_response.status_code}). Check GITHUB_REPO, token repo access, "
-        "and Actions permissions."
+        f"({list_response.status_code}). Resolved repo slug: '{repo_slug}'. "
+        "Check PAT scopes/permissions (Actions read/write + repo access) and workflow file path."
     )
 
 
