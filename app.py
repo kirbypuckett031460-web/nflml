@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import math
 from pathlib import Path
@@ -9,7 +10,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 PUBLISHED_DIR = Path("published")
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
@@ -30,7 +30,28 @@ st.markdown(
   font-weight: 600;
 }
 .compact-table-wrap {overflow-x:auto; margin-bottom: 0.35rem;}
-.compact-table-wrap table {border-collapse: collapse; width: auto; min-width: 100%;}
+.compact-table {
+  border-collapse: collapse;
+  width: auto;
+  min-width: 100%;
+}
+.compact-table th {
+  background-color:#20263A;
+  color:#E5E7EB;
+  font-weight:700;
+  text-align:center;
+  padding: 0.22rem 0.38rem;
+  white-space: nowrap;
+  border: 1px solid #263049;
+}
+.compact-table td {
+  background-color:#121A2A;
+  color:#E5E7EB;
+  text-align:center;
+  padding: 0.18rem 0.35rem;
+  white-space: nowrap;
+  border: 1px solid #263049;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -434,35 +455,40 @@ def _confidence_cell_style(value: float) -> str:
     return f"background-color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); color: #F8FAFC; text-align: center;"
 
 
-def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
-    styled = df.style
-    styled = styled.set_table_attributes('class="compact-picks-table"')
-    styled = styled.set_table_styles(
-        [
-            {
-                "selector": "th",
-                "props": (
-                    "background-color:#20263A; color:#E5E7EB; font-weight:700; text-align:center; "
-                    "padding: 0.22rem 0.38rem; white-space: nowrap;"
-                ),
-            },
-            {
-                "selector": "td",
-                "props": (
-                    "background-color:#121A2A; color:#E5E7EB; border-color:#263049; "
-                    "text-align:center; padding: 0.18rem 0.35rem; white-space: nowrap;"
-                ),
-            },
-        ]
+def _build_compact_colored_table_html(df: pd.DataFrame) -> str:
+    headers = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
+    body_rows: list[str] = []
+    for _, row in df.iterrows():
+        cells: list[str] = []
+        for col in df.columns:
+            value = row[col]
+            style_bits = ["text-align:center;"]
+            display = "-"
+            if col == "Edge":
+                edge_val = pd.to_numeric(value, errors="coerce")
+                display = f"{edge_val:+.1f}%" if pd.notna(edge_val) else "-"
+                style_bits.append(_edge_cell_style(edge_val))
+            elif col == "Confidence":
+                conf_val = pd.to_numeric(value, errors="coerce")
+                display = f"{conf_val:.1f}%" if pd.notna(conf_val) else "-"
+                style_bits.append(_confidence_cell_style(conf_val))
+            else:
+                if value is not None and not pd.isna(value):
+                    display = str(value)
+                if col == "Pick":
+                    style_bits.append(_pick_style(display))
+                    style_bits.append("font-weight:600;")
+                elif col in {"Away", "Home"}:
+                    style_bits.append("font-weight:600;")
+            cell_style = " ".join(bit for bit in style_bits if bit)
+            cells.append(f"<td style=\"{cell_style}\">{html.escape(display)}</td>")
+        body_rows.append(f"<tr>{''.join(cells)}</tr>")
+    body = "".join(body_rows)
+    return (
+        "<div class='compact-table-wrap'>"
+        f"<table class='compact-table'><thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table>"
+        "</div>"
     )
-    styled = styled.map(_edge_cell_style, subset=["Edge"])
-    styled = styled.map(_confidence_cell_style, subset=["Confidence"])
-    styled = styled.format({"Edge": "{:+.1f}%", "Confidence": "{:.1f}%"})
-    styled = styled.map(_pick_style, subset=["Pick"])
-    styled = styled.set_properties(**{"text-align": "center"})
-    name_cols = [col for col in ["Away", "Home", "Pick"] if col in df.columns]
-    styled = styled.set_properties(subset=name_cols, **{"font-weight": "600"})
-    return styled
 
 
 def _table_height_for_rows(row_count: int) -> int:
@@ -476,10 +502,7 @@ def _table_height_for_rows(row_count: int) -> int:
 
 def render_table_safe(table_df: pd.DataFrame) -> None:
     try:
-        html_table = style_table(table_df).hide(axis="index").to_html()
-        html = f"<div class='compact-table-wrap'>{html_table}</div>"
-        table_height = _table_height_for_rows(len(table_df))
-        components.html(html, height=table_height, scrolling=False)
+        st.markdown(_build_compact_colored_table_html(table_df), unsafe_allow_html=True)
     except Exception:
         # Fallback rendering so styling issues never break the public app.
         fallback = table_df.copy()
