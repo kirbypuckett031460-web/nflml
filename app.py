@@ -378,6 +378,17 @@ def get_tracking(summary: dict, key: str) -> dict:
     return {}
 
 
+def format_last_updated_et(raw_value: object) -> str:
+    parsed = pd.to_datetime(raw_value, errors="coerce")
+    if pd.isna(parsed):
+        return "n/a"
+    if parsed.tzinfo is None:
+        parsed = parsed.tz_localize("America/New_York")
+    else:
+        parsed = parsed.tz_convert("America/New_York")
+    return parsed.strftime("%b %d, %Y %I:%M %p ET")
+
+
 def render_record_bar(summary: dict) -> None:
     ml_tracking = get_tracking(summary, "moneyline_bet_tracking")
     total_tracking = get_tracking(summary, "total_bet_tracking")
@@ -490,12 +501,7 @@ else:
                 )
 
 if summary:
-    ml_tracking = get_tracking(summary, "moneyline_bet_tracking")
-    total_tracking = get_tracking(summary, "total_bet_tracking")
-    ml_ytd = (ml_tracking.get("ytd") or {}).get("record", "0-0")
-    total_ytd = (total_tracking.get("ytd") or {}).get("record", "0-0")
+    updated_et = format_last_updated_et(summary.get("updated_at_et"))
     st.caption(
-        f"Last updated: {summary.get('updated_at_et', 'n/a')} | "
-        f"Source: {summary.get('upcoming_source', 'n/a')} | "
-        f"Moneyline YTD: {ml_ytd} | Totals YTD: {total_ytd}"
+        f"Last updated (ET): {updated_et}"
     )
