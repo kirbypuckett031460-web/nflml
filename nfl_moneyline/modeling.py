@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, brier_score_loss, log_loss, roc_auc_score
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.metrics import (
+    accuracy_score,
+    brier_score_loss,
+    log_loss,
+    mean_absolute_error,
+    mean_squared_error,
+    roc_auc_score,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -55,32 +63,68 @@ class NFLMoneylineModel:
 
 
 class NFLTotalModel:
-    """A logistic regression model for over probability."""
+    """A regression model for projecting game totals."""
 
     def __init__(self) -> None:
         self.pipeline = Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="median")),
                 ("scaler", StandardScaler()),
-                ("classifier", LogisticRegression(max_iter=2000, C=1.0)),
+                ("regressor", Ridge(alpha=1.0)),
             ]
         )
+        self.residual_std = 13.5
 
     def fit(self, frame: pd.DataFrame) -> None:
         X = frame[TOTAL_FEATURE_COLUMNS]
-        y = frame["over_hit"].astype(int)
-        self.pipeline.fit(X, y)
+        y = pd.to_numeric(frame["game_total_points"], errors="coerce")
+        valid = y.notna()
+        self.pipeline.fit(X.loc[valid], y.loc[valid])
+
+        projected = self.pipeline.predict(X.loc[valid])
+        residuals = y.loc[valid].to_numpy(dtype=float) - projected
+        std = float(np.nanstd(residuals, ddof=1))
+        if not np.isfinite(std) or std < 1.0:
+            std = 13.5
+        self.residual_std = std
+
+    def predict_total_points(self, frame: pd.DataFrame) -> np.ndarray:
+        return self.pipeline.predict(frame[TOTAL_FEATURE_COLUMNS])
+
+    def _normal_cdf(self, z_values: np.ndarray) -> np.ndarray:
+        return np.array(
+            [0.5 * (1.0 + math.erf(float(z) / math.sqrt(2.0))) for z in z_values],
+            dtype=float,
+        )
 
     def predict_over_prob(self, frame: pd.DataFrame) -> np.ndarray:
-        return self.pipeline.predict_proba(frame[TOTAL_FEATURE_COLUMNS])[:, 1]
+        projected_totals = self.predict_total_points(frame)
+        total_line = pd.to_numeric(frame["total_line"], errors="coerce").to_numpy(dtype=float)
+        sigma = max(float(self.residual_std), 1.0)
+        z_scores = (projected_totals - total_line) / sigma
+        probs = self._normal_cdf(z_scores)
+        probs = np.where(np.isnan(total_line), 0.5, probs)
+        return np.clip(probs, 1e-4, 1.0 - 1e-4)
 
     def save(self, model_path: str) -> None:
-        joblib.dump(self.pipeline, model_path)
+        joblib.dump(
+            {
+                "pipeline": self.pipeline,
+                "residual_std": float(self.residual_std),
+            },
+            model_path,
+        )
 
     @classmethod
     def load(cls, model_path: str) -> "NFLTotalModel":
         obj = cls()
-        obj.pipeline = joblib.load(model_path)
+        payload = joblib.load(model_path)
+        if isinstance(payload, dict) and "pipeline" in payload:
+            obj.pipeline = payload["pipeline"]
+            obj.residual_std = float(payload.get("residual_std", obj.residual_std))
+        else:
+            # Backward compatibility with older serialized model payload.
+            obj.pipeline = payload
         return obj
 
 
@@ -137,6 +181,7 @@ def evaluate_model(model: NFLMoneylineModel, test_frame: pd.DataFrame) -> tuple[
 def evaluate_total_model(model: NFLTotalModel, test_frame: pd.DataFrame) -> tuple[dict[str, float], pd.DataFrame]:
     """Evaluate the total model and return metrics with scored rows."""
     scored = test_frame.copy()
+    scored["projected_total_points"] = model.predict_total_points(scored)
     scored["model_over_prob"] = model.predict_over_prob(scored)
     scored["model_under_prob"] = 1.0 - scored["model_over_prob"]
 
@@ -151,6 +196,23 @@ def evaluate_total_model(model: NFLTotalModel, test_frame: pd.DataFrame) -> tupl
     }
     if y_true.nunique() > 1:
         metrics["roc_auc"] = float(roc_auc_score(y_true, y_prob))
+    actual_total = pd.to_numeric(scored["game_total_points"], errors="coerce")
+    valid_total = actual_total.notna()
+    if valid_total.any():
+        metrics["mae"] = float(
+            mean_absolute_error(
+                actual_total[valid_total],
+                scored.loc[valid_total, "projected_total_points"],
+            )
+        )
+        metrics["rmse"] = float(
+            math.sqrt(
+                mean_squared_error(
+                    actual_total[valid_total],
+                    scored.loc[valid_total, "projected_total_points"],
+                )
+            )
+        )
 
     scored["market_over_prob"] = np.nan
     scored["market_under_prob"] = np.nan
@@ -173,8 +235,16 @@ def evaluate_total_model(model: NFLTotalModel, test_frame: pd.DataFrame) -> tupl
         lambda row: expected_value_per_dollar(row["model_under_prob"], row["under_odds"]),
         axis=1,
     )
-    scored["recommended_total_side"] = np.where(
-        scored["over_ev_per_dollar"] >= scored["under_ev_per_dollar"], "OVER", "UNDER"
+    scored["projected_total_edge"] = scored["projected_total_points"] - pd.to_numeric(
+        scored["total_line"], errors="coerce"
     )
-    scored["recommended_total_ev_per_dollar"] = scored[["over_ev_per_dollar", "under_ev_per_dollar"]].max(axis=1)
+    scored["recommended_total_side"] = np.where(
+        pd.to_numeric(scored["total_line"], errors="coerce").notna(),
+        np.where(scored["projected_total_points"] >= pd.to_numeric(scored["total_line"], errors="coerce"), "OVER", "UNDER"),
+        np.where(scored["model_over_prob"] >= scored["model_under_prob"], "OVER", "UNDER"),
+    )
+    pick_is_over = scored["recommended_total_side"].eq("OVER")
+    scored["recommended_total_ev_per_dollar"] = scored["over_ev_per_dollar"].where(
+        pick_is_over, scored["under_ev_per_dollar"]
+    )
     return metrics, scored
