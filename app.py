@@ -66,8 +66,8 @@ TEAM_COLORS = {
     "TB": "#D50A0A",
     "TEN": "#0C2340",
     "WAS": "#5A1414",
-    "OVER": "#1D4ED8",
-    "UNDER": "#B45309",
+    "OVER": "#16A34A",
+    "UNDER": "#DC2626",
 }
 
 
