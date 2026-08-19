@@ -28,6 +28,8 @@ st.markdown(
   border-radius: 8px;
   font-weight: 600;
 }
+.compact-table-wrap {overflow-x:auto; margin-bottom: 0.35rem;}
+.compact-table-wrap table {border-collapse: collapse; width: auto; min-width: 100%;}
 </style>
 """,
     unsafe_allow_html=True,
@@ -433,6 +435,7 @@ def _confidence_cell_style(value: float) -> str:
 
 def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     styled = df.style
+    styled = styled.set_table_attributes('class="compact-picks-table"')
     styled = styled.set_table_styles(
         [
             {
@@ -471,23 +474,9 @@ def _table_height_for_rows(row_count: int) -> int:
 
 
 def render_table_safe(table_df: pd.DataFrame) -> None:
-    column_widths = {
-        col: st.column_config.TextColumn(col, width="small")
-        for col in table_df.columns
-    }
-    for col in ("Away", "Home", "Pick"):
-        if col in column_widths:
-            column_widths[col] = st.column_config.TextColumn(col, width="medium")
-
-    table_height = _table_height_for_rows(len(table_df))
     try:
-        st.dataframe(
-            style_table(table_df),
-            use_container_width=True,
-            hide_index=True,
-            height=table_height,
-            column_config=column_widths,
-        )
+        html = style_table(table_df).hide(axis="index").to_html()
+        st.markdown(f"<div class='compact-table-wrap'>{html}</div>", unsafe_allow_html=True)
     except Exception:
         # Fallback rendering so styling issues never break the public app.
         fallback = table_df.copy()
@@ -498,12 +487,20 @@ def render_table_safe(table_df: pd.DataFrame) -> None:
             lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
         )
         st.warning("Advanced table styling unavailable; showing fallback table.")
+        table_height = _table_height_for_rows(len(fallback))
+        fallback_column_widths = {
+            col: st.column_config.TextColumn(col, width="small")
+            for col in fallback.columns
+        }
+        for col in ("Away", "Home", "Pick"):
+            if col in fallback_column_widths:
+                fallback_column_widths[col] = st.column_config.TextColumn(col, width="medium")
         st.dataframe(
             fallback,
             use_container_width=True,
             hide_index=True,
             height=table_height,
-            column_config=column_widths,
+            column_config=fallback_column_widths,
         )
 
 
