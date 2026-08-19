@@ -3,380 +3,54 @@
   "holdout_brier_score": 0.21175537029175226,
   "holdout_roc_auc": 0.7167862578821482,
   "moneyline_bet_tracking": {
-    "latest_graded_week": 18,
+    "latest_graded_week": null,
     "previous_week": {
-      "graded_bets": 16,
-      "losses": 8,
+      "graded_bets": 0,
+      "losses": 0,
       "pushes": 0,
-      "record": "8-8",
-      "win_pct": 0.5,
-      "wins": 8
+      "record": "0-0",
+      "win_pct": 0.0,
+      "wins": 0
     },
-    "previous_week_number": 18,
-    "prior_week_number": 17,
-    "tracking_season": 2025,
-    "weekly_records": [
-      {
-        "graded_bets": 16,
-        "losses": 4,
-        "pushes": 0,
-        "record": "12-4",
-        "week": 1,
-        "win_pct": 0.75,
-        "wins": 12
-      },
-      {
-        "graded_bets": 16,
-        "losses": 7,
-        "pushes": 0,
-        "record": "9-7",
-        "week": 2,
-        "win_pct": 0.5625,
-        "wins": 9
-      },
-      {
-        "graded_bets": 16,
-        "losses": 7,
-        "pushes": 0,
-        "record": "9-7",
-        "week": 3,
-        "win_pct": 0.5625,
-        "wins": 9
-      },
-      {
-        "graded_bets": 15,
-        "losses": 11,
-        "pushes": 1,
-        "record": "4-11",
-        "week": 4,
-        "win_pct": 0.26666666666666666,
-        "wins": 4
-      },
-      {
-        "graded_bets": 14,
-        "losses": 7,
-        "pushes": 0,
-        "record": "7-7",
-        "week": 5,
-        "win_pct": 0.5,
-        "wins": 7
-      },
-      {
-        "graded_bets": 15,
-        "losses": 7,
-        "pushes": 0,
-        "record": "8-7",
-        "week": 6,
-        "win_pct": 0.5333333333333333,
-        "wins": 8
-      },
-      {
-        "graded_bets": 15,
-        "losses": 8,
-        "pushes": 0,
-        "record": "7-8",
-        "week": 7,
-        "win_pct": 0.4666666666666667,
-        "wins": 7
-      },
-      {
-        "graded_bets": 13,
-        "losses": 9,
-        "pushes": 0,
-        "record": "4-9",
-        "week": 8,
-        "win_pct": 0.3076923076923077,
-        "wins": 4
-      },
-      {
-        "graded_bets": 14,
-        "losses": 7,
-        "pushes": 0,
-        "record": "7-7",
-        "week": 9,
-        "win_pct": 0.5,
-        "wins": 7
-      },
-      {
-        "graded_bets": 14,
-        "losses": 10,
-        "pushes": 0,
-        "record": "4-10",
-        "week": 10,
-        "win_pct": 0.2857142857142857,
-        "wins": 4
-      },
-      {
-        "graded_bets": 15,
-        "losses": 8,
-        "pushes": 0,
-        "record": "7-8",
-        "week": 11,
-        "win_pct": 0.4666666666666667,
-        "wins": 7
-      },
-      {
-        "graded_bets": 14,
-        "losses": 7,
-        "pushes": 0,
-        "record": "7-7",
-        "week": 12,
-        "win_pct": 0.5,
-        "wins": 7
-      },
-      {
-        "graded_bets": 16,
-        "losses": 5,
-        "pushes": 0,
-        "record": "11-5",
-        "week": 13,
-        "win_pct": 0.6875,
-        "wins": 11
-      },
-      {
-        "graded_bets": 14,
-        "losses": 9,
-        "pushes": 0,
-        "record": "5-9",
-        "week": 14,
-        "win_pct": 0.35714285714285715,
-        "wins": 5
-      },
-      {
-        "graded_bets": 16,
-        "losses": 8,
-        "pushes": 0,
-        "record": "8-8",
-        "week": 15,
-        "win_pct": 0.5,
-        "wins": 8
-      },
-      {
-        "graded_bets": 16,
-        "losses": 6,
-        "pushes": 0,
-        "record": "10-6",
-        "week": 16,
-        "win_pct": 0.625,
-        "wins": 10
-      },
-      {
-        "graded_bets": 16,
-        "losses": 7,
-        "pushes": 0,
-        "record": "9-7",
-        "week": 17,
-        "win_pct": 0.5625,
-        "wins": 9
-      },
-      {
-        "graded_bets": 16,
-        "losses": 8,
-        "pushes": 0,
-        "record": "8-8",
-        "week": 18,
-        "win_pct": 0.5,
-        "wins": 8
-      }
-    ],
+    "previous_week_number": null,
+    "prior_week_number": null,
+    "tracking_season": 2026,
+    "weekly_records": [],
     "ytd": {
-      "graded_bets": 271,
-      "losses": 135,
-      "pushes": 1,
-      "record": "136-135",
-      "win_pct": 0.5018450184501845,
-      "wins": 136
+      "graded_bets": 0,
+      "losses": 0,
+      "pushes": 0,
+      "record": "0-0",
+      "win_pct": 0.0,
+      "wins": 0
     }
   },
   "num_upcoming_games": 112,
   "num_upcoming_totals_games": 112,
   "total_bet_tracking": {
-    "latest_graded_week": 18,
+    "latest_graded_week": null,
     "previous_week": {
-      "graded_bets": 16,
-      "losses": 12,
+      "graded_bets": 0,
+      "losses": 0,
       "pushes": 0,
-      "record": "4-12",
-      "win_pct": 0.25,
-      "wins": 4
+      "record": "0-0",
+      "win_pct": 0.0,
+      "wins": 0
     },
-    "previous_week_number": 18,
-    "prior_week_number": 17,
-    "tracking_season": 2025,
-    "weekly_records": [
-      {
-        "graded_bets": 16,
-        "losses": 6,
-        "pushes": 0,
-        "record": "10-6",
-        "week": 1,
-        "win_pct": 0.625,
-        "wins": 10
-      },
-      {
-        "graded_bets": 16,
-        "losses": 6,
-        "pushes": 0,
-        "record": "10-6",
-        "week": 2,
-        "win_pct": 0.625,
-        "wins": 10
-      },
-      {
-        "graded_bets": 16,
-        "losses": 7,
-        "pushes": 0,
-        "record": "9-7",
-        "week": 3,
-        "win_pct": 0.5625,
-        "wins": 9
-      },
-      {
-        "graded_bets": 16,
-        "losses": 10,
-        "pushes": 0,
-        "record": "6-10",
-        "week": 4,
-        "win_pct": 0.375,
-        "wins": 6
-      },
-      {
-        "graded_bets": 14,
-        "losses": 10,
-        "pushes": 0,
-        "record": "4-10",
-        "week": 5,
-        "win_pct": 0.2857142857142857,
-        "wins": 4
-      },
-      {
-        "graded_bets": 15,
-        "losses": 6,
-        "pushes": 0,
-        "record": "9-6",
-        "week": 6,
-        "win_pct": 0.6,
-        "wins": 9
-      },
-      {
-        "graded_bets": 15,
-        "losses": 10,
-        "pushes": 0,
-        "record": "5-10",
-        "week": 7,
-        "win_pct": 0.3333333333333333,
-        "wins": 5
-      },
-      {
-        "graded_bets": 13,
-        "losses": 9,
-        "pushes": 0,
-        "record": "4-9",
-        "week": 8,
-        "win_pct": 0.3076923076923077,
-        "wins": 4
-      },
-      {
-        "graded_bets": 14,
-        "losses": 8,
-        "pushes": 0,
-        "record": "6-8",
-        "week": 9,
-        "win_pct": 0.42857142857142855,
-        "wins": 6
-      },
-      {
-        "graded_bets": 14,
-        "losses": 5,
-        "pushes": 0,
-        "record": "9-5",
-        "week": 10,
-        "win_pct": 0.6428571428571429,
-        "wins": 9
-      },
-      {
-        "graded_bets": 15,
-        "losses": 9,
-        "pushes": 0,
-        "record": "6-9",
-        "week": 11,
-        "win_pct": 0.4,
-        "wins": 6
-      },
-      {
-        "graded_bets": 14,
-        "losses": 5,
-        "pushes": 0,
-        "record": "9-5",
-        "week": 12,
-        "win_pct": 0.6428571428571429,
-        "wins": 9
-      },
-      {
-        "graded_bets": 16,
-        "losses": 7,
-        "pushes": 0,
-        "record": "9-7",
-        "week": 13,
-        "win_pct": 0.5625,
-        "wins": 9
-      },
-      {
-        "graded_bets": 14,
-        "losses": 9,
-        "pushes": 0,
-        "record": "5-9",
-        "week": 14,
-        "win_pct": 0.35714285714285715,
-        "wins": 5
-      },
-      {
-        "graded_bets": 16,
-        "losses": 9,
-        "pushes": 0,
-        "record": "7-9",
-        "week": 15,
-        "win_pct": 0.4375,
-        "wins": 7
-      },
-      {
-        "graded_bets": 16,
-        "losses": 8,
-        "pushes": 0,
-        "record": "8-8",
-        "week": 16,
-        "win_pct": 0.5,
-        "wins": 8
-      },
-      {
-        "graded_bets": 16,
-        "losses": 6,
-        "pushes": 0,
-        "record": "10-6",
-        "week": 17,
-        "win_pct": 0.625,
-        "wins": 10
-      },
-      {
-        "graded_bets": 16,
-        "losses": 12,
-        "pushes": 0,
-        "record": "4-12",
-        "week": 18,
-        "win_pct": 0.25,
-        "wins": 4
-      }
-    ],
+    "previous_week_number": null,
+    "prior_week_number": null,
+    "tracking_season": 2026,
+    "weekly_records": [],
     "ytd": {
-      "graded_bets": 272,
-      "losses": 142,
+      "graded_bets": 0,
+      "losses": 0,
       "pushes": 0,
-      "record": "130-142",
-      "win_pct": 0.47794117647058826,
-      "wins": 130
+      "record": "0-0",
+      "win_pct": 0.0,
+      "wins": 0
     }
   },
   "upcoming_source": "nflverse",
-  "updated_at_et": "2026-08-18T19:59:23.200925-04:00",
-  "updated_at_utc": "2026-08-18T23:59:23.200925+00:00"
+  "updated_at_et": "2026-08-18T20:06:22.433227-04:00",
+  "updated_at_utc": "2026-08-19T00:06:22.433227+00:00"
 }
