@@ -353,9 +353,24 @@ def style_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
     return styled
 
 
+def _table_height_for_rows(row_count: int) -> int:
+    # Sized to show full slate rows without inner scrolling.
+    header_px = 42
+    row_px = 35
+    padding_px = 10
+    calculated = header_px + (max(row_count, 1) * row_px) + padding_px
+    return int(min(max(calculated, 180), 980))
+
+
 def render_table_safe(table_df: pd.DataFrame) -> None:
+    table_height = _table_height_for_rows(len(table_df))
     try:
-        st.dataframe(style_table(table_df), use_container_width=True, hide_index=True)
+        st.dataframe(
+            style_table(table_df),
+            use_container_width=True,
+            hide_index=True,
+            height=table_height,
+        )
     except Exception:
         # Fallback rendering so styling issues never break the public app.
         fallback = table_df.copy()
@@ -366,7 +381,12 @@ def render_table_safe(table_df: pd.DataFrame) -> None:
             lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
         )
         st.warning("Advanced table styling unavailable; showing fallback table.")
-        st.dataframe(fallback, use_container_width=True, hide_index=True)
+        st.dataframe(
+            fallback,
+            use_container_width=True,
+            hide_index=True,
+            height=table_height,
+        )
 
 
 def get_tracking(summary: dict, key: str) -> dict:
