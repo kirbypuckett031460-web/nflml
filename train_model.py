@@ -380,6 +380,7 @@ def export_public_outputs(
                 "kickoff_et",
                 "season",
                 "week",
+                "source_order",
                 "away_team",
                 "home_team",
                 "away_team_name",
@@ -411,6 +412,8 @@ def export_public_outputs(
             public["away_team_name"] = public["away_team"]
         if "bookmaker" not in public.columns:
             public["bookmaker"] = "nflverse"
+        if "source_order" not in public.columns:
+            public["source_order"] = pd.NA
         public["fair_home_odds"] = public["model_home_win_prob"].map(american_odds_from_probability)
         public["fair_away_odds"] = public["model_away_win_prob"].map(american_odds_from_probability)
         public["confidence_home_pct"] = (public["edge_home_vs_market"] * 100.0).map(edge_to_confidence)
@@ -425,6 +428,7 @@ def export_public_outputs(
                 "kickoff_et",
                 "season",
                 "week",
+                "source_order",
                 "away_team",
                 "home_team",
                 "away_team_name",
@@ -444,7 +448,16 @@ def export_public_outputs(
                 "confidence_away_pct",
                 "recommended_confidence_pct",
             ]
-        ].sort_values(["gameday", "away_team", "home_team"])
+        ]
+        source_rank = pd.to_numeric(public["source_order"], errors="coerce")
+        if source_rank.notna().any():
+            public = (
+                public.assign(_source_rank=source_rank.fillna(10**9))
+                .sort_values(["season", "week", "_source_rank", "gameday", "away_team", "home_team"])
+                .drop(columns=["_source_rank"])
+            )
+        else:
+            public = public.sort_values(["gameday", "away_team", "home_team"])
 
     public.to_csv(PUBLIC_PICKS_PATH, index=False)
 
@@ -456,6 +469,7 @@ def export_public_outputs(
                 "kickoff_et",
                 "season",
                 "week",
+                "source_order",
                 "away_team",
                 "home_team",
                 "away_team_name",
@@ -488,6 +502,8 @@ def export_public_outputs(
             public_totals["away_team_name"] = public_totals["away_team"]
         if "bookmaker" not in public_totals.columns:
             public_totals["bookmaker"] = "nflverse"
+        if "source_order" not in public_totals.columns:
+            public_totals["source_order"] = pd.NA
         public_totals["fair_over_odds"] = public_totals["model_over_prob"].map(american_odds_from_probability)
         public_totals["fair_under_odds"] = public_totals["model_under_prob"].map(american_odds_from_probability)
         public_totals["confidence_over_pct"] = (public_totals["edge_over_vs_market"] * 100.0).map(edge_to_confidence)
@@ -506,6 +522,7 @@ def export_public_outputs(
                 "kickoff_et",
                 "season",
                 "week",
+                "source_order",
                 "away_team",
                 "home_team",
                 "away_team_name",
@@ -526,7 +543,16 @@ def export_public_outputs(
                 "confidence_under_pct",
                 "recommended_total_confidence_pct",
             ]
-        ].sort_values(["gameday", "away_team", "home_team"])
+        ]
+        totals_source_rank = pd.to_numeric(public_totals["source_order"], errors="coerce")
+        if totals_source_rank.notna().any():
+            public_totals = (
+                public_totals.assign(_source_rank=totals_source_rank.fillna(10**9))
+                .sort_values(["season", "week", "_source_rank", "gameday", "away_team", "home_team"])
+                .drop(columns=["_source_rank"])
+            )
+        else:
+            public_totals = public_totals.sort_values(["gameday", "away_team", "home_team"])
     public_totals.to_csv(PUBLIC_TOTALS_PATH, index=False)
 
     if moneyline_bet_history.empty:
