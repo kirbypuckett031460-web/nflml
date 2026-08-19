@@ -96,24 +96,47 @@ def _select_market_snapshot(event: dict) -> dict:
     home_team_name = event["home_team"]
     away_team_name = event["away_team"]
     bookmakers = event.get("bookmakers", [])
-    by_key = {bookmaker.get("key"): bookmaker for bookmaker in bookmakers}
-
-    for key in PREFERRED_BOOKMAKERS:
-        bookmaker = by_key.get(key)
-        if bookmaker is None:
+    parsed_by_key: dict[str, dict] = {}
+    fallback_order: list[str] = []
+    for bookmaker in bookmakers:
+        key = str(bookmaker.get("key") or "")
+        if not key:
             continue
         snapshot = _parse_bookmaker_markets(bookmaker, home_team_name, away_team_name)
-        if snapshot:
-            snapshot["bookmaker"] = key
-            return snapshot
+        if not snapshot:
+            continue
+        parsed_by_key[key] = snapshot
+        fallback_order.append(key)
 
-    for bookmaker in bookmakers:
-        snapshot = _parse_bookmaker_markets(bookmaker, home_team_name, away_team_name)
-        if snapshot:
-            snapshot["bookmaker"] = bookmaker.get("key")
-            return snapshot
+    if not parsed_by_key:
+        return {}
 
-    return {}
+    preferred_order = [key for key in PREFERRED_BOOKMAKERS if key in parsed_by_key]
+    merged_order = preferred_order + [key for key in fallback_order if key not in preferred_order]
+    primary_key = merged_order[0]
+    primary = dict(parsed_by_key[primary_key])
+    primary["bookmaker"] = primary_key
+
+    # Fill missing optional markets (spread/totals) from any other available bookmaker.
+    for key in merged_order[1:]:
+        candidate = parsed_by_key[key]
+        if primary.get("home_spread_line") is None and candidate.get("home_spread_line") is not None:
+            primary["home_spread_line"] = candidate.get("home_spread_line")
+        if primary.get("total_line") is None and candidate.get("total_line") is not None:
+            primary["total_line"] = candidate.get("total_line")
+        if primary.get("over_odds") is None and candidate.get("over_odds") is not None:
+            primary["over_odds"] = candidate.get("over_odds")
+        if primary.get("under_odds") is None and candidate.get("under_odds") is not None:
+            primary["under_odds"] = candidate.get("under_odds")
+        if (
+            primary.get("home_spread_line") is not None
+            and primary.get("total_line") is not None
+            and primary.get("over_odds") is not None
+            and primary.get("under_odds") is not None
+        ):
+            break
+
+    return primary
 
 
 def _to_team_abbr(name: str) -> str:
