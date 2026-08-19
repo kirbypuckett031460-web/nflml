@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 PUBLISHED_DIR = Path("published")
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
@@ -475,8 +476,10 @@ def _table_height_for_rows(row_count: int) -> int:
 
 def render_table_safe(table_df: pd.DataFrame) -> None:
     try:
-        html = style_table(table_df).hide(axis="index").to_html()
-        st.markdown(f"<div class='compact-table-wrap'>{html}</div>", unsafe_allow_html=True)
+        html_table = style_table(table_df).hide(axis="index").to_html()
+        html = f"<div class='compact-table-wrap'>{html_table}</div>"
+        table_height = _table_height_for_rows(len(table_df))
+        components.html(html, height=table_height, scrolling=False)
     except Exception:
         # Fallback rendering so styling issues never break the public app.
         fallback = table_df.copy()
