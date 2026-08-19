@@ -202,14 +202,21 @@ def _to_team_abbr(name: str) -> str:
 def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataFrame:
     """Fetch upcoming NFL odds and return a normalized dataframe."""
     now_utc = datetime.now(timezone.utc)
-    params = {
-        "apiKey": api_key,
-        "oddsFormat": "american",
-        "dateFormat": "iso",
-        "commenceTimeFrom": _odds_api_time(now_utc),
-        "commenceTimeTo": _odds_api_time(now_utc + timedelta(days=days_ahead)),
-    }
-    events = _fetch_events_with_fallback(params)
+    windows: list[int] = [int(days_ahead)]
+    if days_ahead < 30:
+        windows.append(30)
+    events: list[dict] = []
+    for window_days in windows:
+        params = {
+            "apiKey": api_key,
+            "oddsFormat": "american",
+            "dateFormat": "iso",
+            "commenceTimeFrom": _odds_api_time(now_utc),
+            "commenceTimeTo": _odds_api_time(now_utc + timedelta(days=window_days)),
+        }
+        events = _fetch_events_with_fallback(params)
+        if events:
+            break
 
     rows: list[dict] = []
     for source_order, event in enumerate(events, start=1):
