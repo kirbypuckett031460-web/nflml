@@ -155,6 +155,7 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
             {
                 "game_id": f"oddsapi_{event.get('id', '')}",
                 "gameday": commence,
+                "gametime": commence.tz_convert("America/New_York").strftime("%H:%M"),
                 "season": int(commence.tz_convert("America/New_York").year),
                 "week": pd.NA,
                 "home_team_name": home_name,

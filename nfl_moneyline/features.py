@@ -96,6 +96,7 @@ def build_feature_frame(games_df: pd.DataFrame) -> pd.DataFrame:
         row = {
             "game_id": game.game_id,
             "gameday": game.gameday,
+            "gametime": game.gametime if hasattr(game, "gametime") else np.nan,
             "season": game.season,
             "week": game.week,
             "game_type": game.game_type,
@@ -257,6 +258,7 @@ def build_external_prediction_frame(
         row = {
             "game_id": game.game_id,
             "gameday": game.gameday,
+            "gametime": getattr(game, "gametime", np.nan),
             "season": game.season,
             "week": game.week,
             "game_type": "REG",

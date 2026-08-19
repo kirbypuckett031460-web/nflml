@@ -281,10 +281,24 @@ def build_bet_tracking_summary(bet_history: pd.DataFrame) -> dict[str, object]:
     }
 
 
-def _format_kickoff_et(value: object) -> str:
-    ts = pd.to_datetime(value, errors="coerce")
+def _format_kickoff_et(gameday: object, gametime: object) -> str:
+    ts = pd.to_datetime(gameday, errors="coerce")
     if pd.isna(ts):
         return ""
+
+    gametime_str = str(gametime).strip() if gametime is not None else ""
+    has_gametime = bool(gametime_str) and gametime_str.lower() != "nan"
+
+    if has_gametime:
+        parsed_time = pd.to_datetime(gametime_str, format="%H:%M", errors="coerce")
+        if pd.notna(parsed_time):
+            if ts.tzinfo is not None:
+                date_et = ts.tz_convert("America/New_York").date()
+            else:
+                date_et = ts.date()
+            kickoff = pd.Timestamp.combine(date_et, parsed_time.time())
+            return kickoff.strftime("%Y-%m-%d %I:%M %p ET")
+
     if ts.tzinfo is not None:
         return ts.tz_convert("America/New_York").strftime("%Y-%m-%d %I:%M %p ET")
     return ts.strftime("%Y-%m-%d")
@@ -368,7 +382,10 @@ def export_public_outputs(
             ]
         )
     else:
-        public["kickoff_et"] = public["gameday"].map(_format_kickoff_et)
+        public["kickoff_et"] = public.apply(
+            lambda row: _format_kickoff_et(row.get("gameday"), row.get("gametime")),
+            axis=1,
+        )
         if "home_team_name" not in public.columns:
             public["home_team_name"] = public["home_team"]
         if "away_team_name" not in public.columns:
@@ -442,7 +459,10 @@ def export_public_outputs(
             ]
         )
     else:
-        public_totals["kickoff_et"] = public_totals["gameday"].map(_format_kickoff_et)
+        public_totals["kickoff_et"] = public_totals.apply(
+            lambda row: _format_kickoff_et(row.get("gameday"), row.get("gametime")),
+            axis=1,
+        )
         if "home_team_name" not in public_totals.columns:
             public_totals["home_team_name"] = public_totals["home_team"]
         if "away_team_name" not in public_totals.columns:
