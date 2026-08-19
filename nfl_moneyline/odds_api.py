@@ -160,7 +160,7 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
     events = response.json()
 
     rows: list[dict] = []
-    for event in events:
+    for source_order, event in enumerate(events, start=1):
         snapshot = _select_market_snapshot(event)
         if not snapshot:
             continue
@@ -183,6 +183,7 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
                 "week": pd.NA,
                 "home_team_name": home_name,
                 "away_team_name": away_name,
+                "source_order": source_order,
                 "home_team": _to_team_abbr(home_name),
                 "away_team": _to_team_abbr(away_name),
                 "home_moneyline": snapshot["home_moneyline"],
@@ -199,5 +200,4 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
     if not rows:
         return pd.DataFrame()
 
-    frame = pd.DataFrame(rows)
-    return frame.sort_values("gameday").reset_index(drop=True)
+    return pd.DataFrame(rows).reset_index(drop=True)
