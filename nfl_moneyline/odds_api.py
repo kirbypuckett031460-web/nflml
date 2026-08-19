@@ -9,6 +9,7 @@ import requests
 
 
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
+PRIMARY_BOOKMAKER = "fanduel"
 
 TEAM_NAME_TO_ABBR = {
     "Arizona Cardinals": "ARI",
@@ -45,7 +46,7 @@ TEAM_NAME_TO_ABBR = {
     "Washington Commanders": "WAS",
 }
 
-PREFERRED_BOOKMAKERS = ["fanduel", "draftkings", "betmgm", "caesars", "espnbet", "betrivers"]
+PREFERRED_BOOKMAKERS = [PRIMARY_BOOKMAKER, "draftkings", "betmgm", "caesars", "espnbet", "betrivers"]
 
 
 def _parse_bookmaker_markets(bookmaker: dict, home_team_name: str, away_team_name: str) -> dict:
@@ -149,6 +150,7 @@ def fetch_upcoming_odds_frame(api_key: str, *, days_ahead: int = 14) -> pd.DataF
     params = {
         "apiKey": api_key,
         "regions": "us",
+        "bookmakers": PRIMARY_BOOKMAKER,
         "markets": "h2h,spreads,totals",
         "oddsFormat": "american",
         "dateFormat": "iso",

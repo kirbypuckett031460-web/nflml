@@ -473,6 +473,12 @@ summary = load_summary()
 moneyline_picks = load_csv(PUBLIC_PICKS_PATH)
 totals_picks = load_csv(PUBLIC_TOTALS_PATH)
 
+if summary and summary.get("upcoming_source") != "odds_api":
+    st.warning(
+        "Current feed source is fallback schedule data (not Odds API/FanDuel). "
+        "Listing order may not match FanDuel until the next successful Odds API run."
+    )
+
 header_col, refresh_col = st.columns([6, 1])
 with header_col:
     st.markdown("<div class='title-row'><h1>NFL Betting Picks Board</h1></div>", unsafe_allow_html=True)

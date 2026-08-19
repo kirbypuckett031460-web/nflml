@@ -662,7 +662,11 @@ def export_public_outputs(
         json.dump(summary, f, indent=2, sort_keys=True)
 
 
-def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[str, object]:
+def run_pipeline(
+    odds_api_key: str | None,
+    use_odds_api: bool = True,
+    allow_odds_fallback: bool = False,
+) -> dict[str, object]:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -718,8 +722,15 @@ def run_pipeline(odds_api_key: str | None, use_odds_api: bool = True) -> dict[st
                 upcoming_frame = build_external_prediction_frame(odds_frame, team_snapshot, last_game_date)
                 upcoming_frame = assign_schedule_week(upcoming_frame, future_schedule)
                 upcoming_source = "odds_api"
+            elif not allow_odds_fallback:
+                raise RuntimeError("Odds API returned zero upcoming events; refusing fallback.")
         except Exception as exc:
-            print(f"Odds API fetch failed ({exc}). Falling back to nflverse upcoming rows.")
+            if allow_odds_fallback:
+                print(f"Odds API fetch failed ({exc}). Falling back to nflverse upcoming rows.")
+            else:
+                raise RuntimeError(
+                    f"Odds API fetch failed and fallback is disabled: {exc}"
+                ) from exc
 
     if upcoming_frame.empty:
         upcoming_frame = build_prediction_frame(feature_frame)
@@ -801,12 +812,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip upcoming odds fetch from The Odds API and use nflverse upcoming rows.",
     )
+    parser.add_argument(
+        "--allow-odds-fallback",
+        action="store_true",
+        help="Allow fallback to nflverse upcoming rows if Odds API fetch fails.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    result = run_pipeline(args.odds_api_key, use_odds_api=not args.skip_odds_api)
+    result = run_pipeline(
+        args.odds_api_key,
+        use_odds_api=not args.skip_odds_api,
+        allow_odds_fallback=args.allow_odds_fallback,
+    )
 
     print(f"Model saved to: {result['model_path']}")
     print(f"Total model saved to: {result['total_model_path']}")

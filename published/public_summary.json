@@ -1,6 +1,6 @@
 {
   "holdout_accuracy": 0.6544117647058824,
-  "holdout_brier_score": 0.21175537029175223,
+  "holdout_brier_score": 0.21175537029175226,
   "holdout_roc_auc": 0.7167862578821482,
   "moneyline_bet_tracking": {
     "latest_graded_week": null,
