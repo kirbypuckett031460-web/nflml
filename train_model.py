@@ -719,6 +719,7 @@ def run_pipeline(
 
     upcoming_source = "nflverse"
     upcoming_frame = pd.DataFrame()
+    odds_empty_without_fallback = False
     future_schedule = feature_frame[feature_frame["home_win"].isna()][["season", "week", "home_team", "away_team"]].copy()
     if use_odds_api and odds_api_key:
         try:
@@ -728,8 +729,12 @@ def run_pipeline(
                 upcoming_frame = build_external_prediction_frame(odds_frame, team_snapshot, last_game_date)
                 upcoming_frame = assign_schedule_week(upcoming_frame, future_schedule)
                 upcoming_source = "odds_api"
-            elif not allow_odds_fallback:
-                raise RuntimeError("Odds API returned zero upcoming events; refusing fallback.")
+            elif allow_odds_fallback:
+                print("Odds API returned zero upcoming events. Falling back to nflverse upcoming rows.")
+            else:
+                print("Odds API returned zero upcoming events. Publishing empty upcoming slate from Odds API.")
+                upcoming_source = "odds_api"
+                odds_empty_without_fallback = True
         except Exception as exc:
             safe_exc = sanitize_error_message(exc)
             if allow_odds_fallback:
@@ -740,7 +745,7 @@ def run_pipeline(
                     f"Details: {safe_exc}"
                 ) from None
 
-    if upcoming_frame.empty:
+    if upcoming_frame.empty and not odds_empty_without_fallback:
         upcoming_frame = build_prediction_frame(feature_frame)
         upcoming_source = "nflverse"
 
