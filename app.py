@@ -122,6 +122,29 @@ def format_game_time_et(row: pd.Series) -> str:
     return ""
 
 
+def kickoff_sort_value(row: pd.Series) -> pd.Timestamp:
+    """Build sortable kickoff timestamp (ET-local naive)."""
+    gameday_ts = pd.to_datetime(row.get("gameday"), errors="coerce")
+    if pd.isna(gameday_ts):
+        return pd.Timestamp.max
+
+    gametime_raw = str(row.get("gametime", "")).strip()
+    has_gametime = bool(gametime_raw) and gametime_raw.lower() != "nan"
+    if has_gametime:
+        parsed_time = pd.to_datetime(gametime_raw, format="%H:%M", errors="coerce")
+        if pd.notna(parsed_time):
+            if gameday_ts.tzinfo is not None:
+                et_date = gameday_ts.tz_convert("America/New_York").date()
+            else:
+                et_date = gameday_ts.date()
+            return pd.Timestamp.combine(et_date, parsed_time.time())
+
+    if gameday_ts.tzinfo is not None:
+        return gameday_ts.tz_convert("America/New_York").tz_localize(None)
+    # Date-only with no time: place at end of day so known kickoff times come first.
+    return pd.Timestamp.combine(gameday_ts.date(), pd.Timestamp("23:59").time())
+
+
 def _normalize_week(value: object) -> int | None:
     if value is None or pd.isna(value):
         return None
@@ -200,6 +223,7 @@ def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame = picks.copy()
     frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
     frame["Game Time (ET)"] = frame.apply(format_game_time_et, axis=1)
+    frame["kickoff_sort_dt"] = frame.apply(kickoff_sort_value, axis=1)
 
     pick_is_home = frame["recommended_side"].eq("HOME")
     frame["pick_team"] = np.where(pick_is_home, frame["home_team"], frame["away_team"])
@@ -239,13 +263,14 @@ def build_moneyline_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["season_num"] = pd.to_numeric(frame["season"], errors="coerce")
     frame["week_num"] = pd.to_numeric(frame["week"], errors="coerce")
     frame["week_key"] = frame.apply(lambda row: _make_week_key(row["season_num"], row["week_num"]), axis=1)
-    return frame.sort_values(["gameday_dt", "Away", "Home"]).reset_index(drop=True)
+    return frame.sort_values(["kickoff_sort_dt", "Away", "Home"]).reset_index(drop=True)
 
 
 def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame = picks.copy()
     frame["gameday_dt"] = pd.to_datetime(frame["gameday"], errors="coerce")
     frame["Game Time (ET)"] = frame.apply(format_game_time_et, axis=1)
+    frame["kickoff_sort_dt"] = frame.apply(kickoff_sort_value, axis=1)
     pick_is_over = frame["recommended_total_side"].eq("OVER")
     frame["Pick"] = np.where(pick_is_over, "OVER", "UNDER")
     frame["pick_prob"] = np.where(pick_is_over, frame["model_over_prob"], frame["model_under_prob"])
@@ -286,7 +311,7 @@ def build_totals_display_frame(picks: pd.DataFrame) -> pd.DataFrame:
     frame["season_num"] = pd.to_numeric(frame["season"], errors="coerce")
     frame["week_num"] = pd.to_numeric(frame["week"], errors="coerce")
     frame["week_key"] = frame.apply(lambda row: _make_week_key(row["season_num"], row["week_num"]), axis=1)
-    return frame.sort_values(["gameday_dt", "Away", "Home"]).reset_index(drop=True)
+    return frame.sort_values(["kickoff_sort_dt", "Away", "Home"]).reset_index(drop=True)
 
 
 def _pick_style(value: str) -> str:
