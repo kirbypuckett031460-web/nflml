@@ -209,13 +209,31 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Run model now")
+    allow_odds_fallback = st.checkbox(
+        "Allow fallback to schedule feed if Odds API fails",
+        value=False,
+        help=(
+            "Recommended OFF if you need strict FanDuel ordering parity. "
+            "Turn ON only when you want a non-blocking fallback."
+        ),
+    )
     if st.button("Run model locally and update public files"):
-        with st.spinner("Running model pipeline..."):
-            result = run_pipeline(odds_api_key, use_odds_api=True)
-        st.success(
-            f"Done. Source: {result['upcoming_source']}. "
-            f"Upcoming games scored: {result['upcoming_rows']}."
-        )
+        try:
+            with st.spinner("Running model pipeline..."):
+                result = run_pipeline(
+                    odds_api_key,
+                    use_odds_api=True,
+                    allow_odds_fallback=allow_odds_fallback,
+                )
+            st.success(
+                f"Done. Source: {result['upcoming_source']}. "
+                f"Upcoming games scored: {result['upcoming_rows']}."
+            )
+        except Exception as exc:
+            st.error(
+                "Model run failed. "
+                f"{exc}"
+            )
 
 with col2:
     st.subheader("Trigger GitHub CI")
