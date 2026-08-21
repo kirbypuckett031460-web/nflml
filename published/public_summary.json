@@ -1,6 +1,6 @@
 {
   "holdout_accuracy": 0.6544117647058824,
-  "holdout_brier_score": 0.21175537029175226,
+  "holdout_brier_score": 0.21175537029175223,
   "holdout_roc_auc": 0.7167862578821482,
   "moneyline_bet_tracking": {
     "latest_graded_week": null,
@@ -25,8 +25,8 @@
       "wins": 0
     }
   },
-  "num_upcoming_games": 112,
-  "num_upcoming_totals_games": 112,
+  "num_upcoming_games": 16,
+  "num_upcoming_totals_games": 16,
   "total_bet_tracking": {
     "latest_graded_week": null,
     "previous_week": {
@@ -50,7 +50,7 @@
       "wins": 0
     }
   },
-  "upcoming_source": "nflverse",
-  "updated_at_et": "2026-08-19T13:08:01.499753-04:00",
-  "updated_at_utc": "2026-08-19T17:08:01.499753+00:00"
+  "upcoming_source": "odds_api",
+  "updated_at_et": "2026-08-21T12:50:20.244526-04:00",
+  "updated_at_utc": "2026-08-21T16:50:20.244526+00:00"
 }
