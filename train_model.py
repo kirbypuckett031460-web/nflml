@@ -85,6 +85,7 @@ def score_upcoming_totals(model: NFLTotalModel, frame: pd.DataFrame) -> pd.DataF
         return frame.copy()
 
     scored = frame.copy()
+    scored["projected_total_points"] = model.predict_total_points(scored)
     scored["model_over_prob"] = model.predict_over_prob(scored)
     scored["model_under_prob"] = 1.0 - scored["model_over_prob"]
 
@@ -113,15 +114,31 @@ def score_upcoming_totals(model: NFLTotalModel, frame: pd.DataFrame) -> pd.DataF
         lambda row: expected_value_per_dollar(row["model_under_prob"], row["under_odds"]),
         axis=1,
     )
+    scored["projected_total_edge"] = scored["projected_total_points"] - pd.to_numeric(
+        scored["total_line"], errors="coerce"
+    )
+
+    def _coerce_float(value: object) -> float | None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if pd.isna(numeric):
+            return None
+        return numeric
+
     def choose_total_side(row: pd.Series) -> str:
-        over_ev = row["over_ev_per_dollar"]
-        under_ev = row["under_ev_per_dollar"]
-        if pd.notna(over_ev) and pd.notna(under_ev):
-            return "OVER" if over_ev >= under_ev else "UNDER"
+        total_line = _coerce_float(row.get("total_line"))
+        projected_total = _coerce_float(row.get("projected_total_points"))
+        if total_line is not None and projected_total is not None:
+            return "OVER" if projected_total >= total_line else "UNDER"
         return "OVER" if row["model_over_prob"] >= row["model_under_prob"] else "UNDER"
 
     scored["recommended_total_side"] = scored.apply(choose_total_side, axis=1)
-    scored["recommended_total_ev_per_dollar"] = scored[["over_ev_per_dollar", "under_ev_per_dollar"]].max(axis=1)
+    pick_is_over = scored["recommended_total_side"].eq("OVER")
+    scored["recommended_total_ev_per_dollar"] = scored["over_ev_per_dollar"].where(
+        pick_is_over, scored["under_ev_per_dollar"]
+    )
     scored["recommended_total_ev_per_dollar"] = scored["recommended_total_ev_per_dollar"].fillna(0.0)
     return scored
 
@@ -482,6 +499,8 @@ def export_public_outputs(
                 "home_team_name",
                 "bookmaker",
                 "total_line",
+                "projected_total_points",
+                "projected_total_edge",
                 "over_odds",
                 "under_odds",
                 "model_over_prob",
@@ -510,6 +529,13 @@ def export_public_outputs(
             public_totals["bookmaker"] = "nflverse"
         if "source_order" not in public_totals.columns:
             public_totals["source_order"] = pd.NA
+        if "projected_total_points" not in public_totals.columns:
+            public_totals["projected_total_points"] = pd.NA
+        if "projected_total_edge" not in public_totals.columns:
+            public_totals["projected_total_edge"] = (
+                pd.to_numeric(public_totals.get("projected_total_points"), errors="coerce")
+                - pd.to_numeric(public_totals.get("total_line"), errors="coerce")
+            )
         public_totals["fair_over_odds"] = public_totals["model_over_prob"].map(american_odds_from_probability)
         public_totals["fair_under_odds"] = public_totals["model_under_prob"].map(american_odds_from_probability)
         public_totals["confidence_over_pct"] = (public_totals["edge_over_vs_market"] * 100.0).map(edge_to_confidence)
@@ -535,6 +561,8 @@ def export_public_outputs(
                 "home_team_name",
                 "bookmaker",
                 "total_line",
+                "projected_total_points",
+                "projected_total_edge",
                 "over_odds",
                 "under_odds",
                 "model_over_prob",
@@ -708,6 +736,9 @@ def run_pipeline(
         "brier_score": float(total_metrics.get("brier_score", 0.0)),
         "log_loss": float(total_metrics.get("log_loss", 0.0)),
         "roc_auc": float(total_metrics.get("roc_auc", 0.0)) if "roc_auc" in total_metrics else None,
+        "mae": float(total_metrics.get("mae", 0.0)),
+        "rmse": float(total_metrics.get("rmse", 0.0)),
+        "residual_std": float(total_eval_model.residual_std),
         "train_rows": int(len(total_train)),
         "test_rows": int(len(total_test)),
         "latest_test_season": int(total_test["season"].max()) if not total_test.empty else None,

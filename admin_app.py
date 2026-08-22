@@ -275,6 +275,8 @@ if metrics:
             "Totals model — "
             f"Accuracy: {float(total_m.get('accuracy', 0.0)):.3f} | "
             f"ROC-AUC: {float(total_m.get('roc_auc', 0.0) or 0.0):.3f} | "
+            f"MAE: {float(total_m.get('mae', 0.0)):.2f} | "
+            f"RMSE: {float(total_m.get('rmse', 0.0)):.2f} | "
             f"Train rows: {int(total_m.get('train_rows', 0)):,} | "
             f"Test rows: {int(total_m.get('test_rows', 0)):,}"
         )
