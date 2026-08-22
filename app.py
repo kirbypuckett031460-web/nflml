@@ -52,6 +52,23 @@ st.markdown(
   white-space: nowrap;
   border: 1px solid #263049;
 }
+/* Hide Streamlit-hosted GitHub/Fork chrome links in public embed. */
+[data-testid="stToolbar"] a[href*="github.com"],
+[data-testid="stToolbar"] a[href*="streamlit.io"],
+[data-testid="stToolbar"] button[title*="Fork"],
+[data-testid="stToolbar"] button[aria-label*="Fork"],
+[data-testid="stToolbar"] [aria-label*="GitHub"],
+[data-testid="stAppDeployButton"] {
+  display: none !important;
+}
+header[data-testid="stHeader"],
+[data-testid="stToolbar"] {
+  display: none !important;
+}
+footer a[href*="github.com"],
+footer a[href*="streamlit.io"] {
+  display: none !important;
+}
 </style>
 """,
     unsafe_allow_html=True,
