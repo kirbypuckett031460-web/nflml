@@ -53,6 +53,15 @@ def sanitize_error_message(message: object) -> str:
     return re.sub(r"(apiKey=)[^&\\s]+", r"\1[REDACTED]", text)
 
 
+def normalize_categorical_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Convert categorical-typed columns to plain object values for stable ops."""
+    normalized = frame.copy()
+    for col in normalized.columns:
+        if pd.api.types.is_categorical_dtype(normalized[col]):
+            normalized[col] = normalized[col].astype("string").astype(object)
+    return normalized
+
+
 def score_upcoming_games(model: NFLMoneylineModel, frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
@@ -751,7 +760,7 @@ def run_pipeline(
     upcoming_source = "nflverse"
     upcoming_frame = pd.DataFrame()
     odds_empty_without_fallback = False
-    schedule_upcoming_frame = build_prediction_frame(feature_frame)
+    schedule_upcoming_frame = normalize_categorical_columns(build_prediction_frame(feature_frame))
     future_schedule = feature_frame[feature_frame["home_win"].isna()][["season", "week", "home_team", "away_team"]].copy()
     if use_odds_api and odds_api_key:
         try:
@@ -759,11 +768,12 @@ def run_pipeline(
             if not odds_frame.empty:
                 team_snapshot, last_game_date = build_team_form_snapshot(games)
                 upcoming_frame = build_external_prediction_frame(odds_frame, team_snapshot, last_game_date)
+                upcoming_frame = normalize_categorical_columns(upcoming_frame)
                 upcoming_frame = assign_schedule_week(upcoming_frame, future_schedule)
                 # Keep near-term Odds API rows, but include later scheduled weeks so week selection
                 # remains available across the full slate horizon.
                 if not schedule_upcoming_frame.empty:
-                    schedule_superset = schedule_upcoming_frame.copy()
+                    schedule_superset = normalize_categorical_columns(schedule_upcoming_frame)
                     schedule_superset["home_team_name"] = schedule_superset.get("home_team_name", schedule_superset["home_team"])
                     schedule_superset["away_team_name"] = schedule_superset.get("away_team_name", schedule_superset["away_team"])
                     schedule_superset["bookmaker"] = schedule_superset.get("bookmaker", "nflverse")
@@ -787,6 +797,7 @@ def run_pipeline(
                     missing_schedule = schedule_superset.loc[missing_mask].copy()
                     if not missing_schedule.empty:
                         upcoming_frame = pd.concat([upcoming_frame, missing_schedule], ignore_index=True, sort=False)
+                        upcoming_frame = normalize_categorical_columns(upcoming_frame)
                 upcoming_source = "odds_api"
             elif allow_odds_fallback:
                 print("Odds API returned zero upcoming events. Falling back to nflverse upcoming rows.")
