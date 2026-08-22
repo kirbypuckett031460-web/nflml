@@ -161,14 +161,12 @@ def _display_team_name(value: object) -> str:
     return raw
 
 
-@st.cache_data(ttl=300, show_spinner=False)
 def load_summary() -> dict:
     if not PUBLIC_SUMMARY_PATH.exists():
         return {}
     return json.loads(PUBLIC_SUMMARY_PATH.read_text(encoding="utf-8"))
 
 
-@st.cache_data(ttl=300, show_spinner=False)
 def load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
