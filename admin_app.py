@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import traceback
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -234,6 +235,7 @@ with col1:
                 "Model run failed. "
                 f"{exc}"
             )
+            st.code(traceback.format_exc(), language="python")
 
 with col2:
     st.subheader("Trigger GitHub CI")
