@@ -481,15 +481,16 @@ def export_public_outputs(
                 "recommended_confidence_pct",
             ]
         ]
+        public["_gameday_sort"] = pd.to_datetime(public["gameday"], errors="coerce", utc=True)
         source_rank = pd.to_numeric(public["source_order"], errors="coerce")
         if source_rank.notna().any():
             public = (
                 public.assign(_source_rank=source_rank.fillna(10**9))
-                .sort_values(["_source_rank", "gameday", "away_team", "home_team"])
-                .drop(columns=["_source_rank"])
+                .sort_values(["_source_rank", "_gameday_sort", "away_team", "home_team"])
+                .drop(columns=["_source_rank", "_gameday_sort"])
             )
         else:
-            public = public.sort_values(["gameday", "away_team", "home_team"])
+            public = public.sort_values(["_gameday_sort", "away_team", "home_team"]).drop(columns=["_gameday_sort"])
 
     public.to_csv(PUBLIC_PICKS_PATH, index=False)
 
@@ -587,15 +588,18 @@ def export_public_outputs(
                 "recommended_total_confidence_pct",
             ]
         ]
+        public_totals["_gameday_sort"] = pd.to_datetime(public_totals["gameday"], errors="coerce", utc=True)
         totals_source_rank = pd.to_numeric(public_totals["source_order"], errors="coerce")
         if totals_source_rank.notna().any():
             public_totals = (
                 public_totals.assign(_source_rank=totals_source_rank.fillna(10**9))
-                .sort_values(["_source_rank", "gameday", "away_team", "home_team"])
-                .drop(columns=["_source_rank"])
+                .sort_values(["_source_rank", "_gameday_sort", "away_team", "home_team"])
+                .drop(columns=["_source_rank", "_gameday_sort"])
             )
         else:
-            public_totals = public_totals.sort_values(["gameday", "away_team", "home_team"])
+            public_totals = public_totals.sort_values(["_gameday_sort", "away_team", "home_team"]).drop(
+                columns=["_gameday_sort"]
+            )
     public_totals.to_csv(PUBLIC_TOTALS_PATH, index=False)
 
     if moneyline_bet_history.empty:
