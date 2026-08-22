@@ -768,22 +768,23 @@ def run_pipeline(
                     schedule_superset["away_team_name"] = schedule_superset.get("away_team_name", schedule_superset["away_team"])
                     schedule_superset["bookmaker"] = schedule_superset.get("bookmaker", "nflverse")
                     schedule_superset["source_order"] = schedule_superset.get("source_order", pd.NA)
-
-                    odds_keys = (
-                        upcoming_frame["season"].astype(str)
-                        + "|"
-                        + upcoming_frame["home_team"].astype(str)
-                        + "|"
-                        + upcoming_frame["away_team"].astype(str)
+                    odds_key_set = {
+                        (str(season), str(home), str(away))
+                        for season, home, away in zip(
+                            upcoming_frame["season"],
+                            upcoming_frame["home_team"],
+                            upcoming_frame["away_team"],
+                        )
+                    }
+                    schedule_keys = list(
+                        zip(
+                            schedule_superset["season"].astype(str),
+                            schedule_superset["home_team"].astype(str),
+                            schedule_superset["away_team"].astype(str),
+                        )
                     )
-                    schedule_keys = (
-                        schedule_superset["season"].astype(str)
-                        + "|"
-                        + schedule_superset["home_team"].astype(str)
-                        + "|"
-                        + schedule_superset["away_team"].astype(str)
-                    )
-                    missing_schedule = schedule_superset[~schedule_keys.isin(set(odds_keys))].copy()
+                    missing_mask = [key not in odds_key_set for key in schedule_keys]
+                    missing_schedule = schedule_superset.loc[missing_mask].copy()
                     if not missing_schedule.empty:
                         upcoming_frame = pd.concat([upcoming_frame, missing_schedule], ignore_index=True, sort=False)
                 upcoming_source = "odds_api"
