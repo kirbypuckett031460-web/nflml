@@ -751,6 +751,7 @@ def run_pipeline(
     upcoming_source = "nflverse"
     upcoming_frame = pd.DataFrame()
     odds_empty_without_fallback = False
+    schedule_upcoming_frame = build_prediction_frame(feature_frame)
     future_schedule = feature_frame[feature_frame["home_win"].isna()][["season", "week", "home_team", "away_team"]].copy()
     if use_odds_api and odds_api_key:
         try:
@@ -759,6 +760,32 @@ def run_pipeline(
                 team_snapshot, last_game_date = build_team_form_snapshot(games)
                 upcoming_frame = build_external_prediction_frame(odds_frame, team_snapshot, last_game_date)
                 upcoming_frame = assign_schedule_week(upcoming_frame, future_schedule)
+                # Keep near-term Odds API rows, but include later scheduled weeks so week selection
+                # remains available across the full slate horizon.
+                if not schedule_upcoming_frame.empty:
+                    schedule_superset = schedule_upcoming_frame.copy()
+                    schedule_superset["home_team_name"] = schedule_superset.get("home_team_name", schedule_superset["home_team"])
+                    schedule_superset["away_team_name"] = schedule_superset.get("away_team_name", schedule_superset["away_team"])
+                    schedule_superset["bookmaker"] = schedule_superset.get("bookmaker", "nflverse")
+                    schedule_superset["source_order"] = schedule_superset.get("source_order", pd.NA)
+
+                    odds_keys = (
+                        upcoming_frame["season"].astype(str)
+                        + "|"
+                        + upcoming_frame["home_team"].astype(str)
+                        + "|"
+                        + upcoming_frame["away_team"].astype(str)
+                    )
+                    schedule_keys = (
+                        schedule_superset["season"].astype(str)
+                        + "|"
+                        + schedule_superset["home_team"].astype(str)
+                        + "|"
+                        + schedule_superset["away_team"].astype(str)
+                    )
+                    missing_schedule = schedule_superset[~schedule_keys.isin(set(odds_keys))].copy()
+                    if not missing_schedule.empty:
+                        upcoming_frame = pd.concat([upcoming_frame, missing_schedule], ignore_index=True, sort=False)
                 upcoming_source = "odds_api"
             elif allow_odds_fallback:
                 print("Odds API returned zero upcoming events. Falling back to nflverse upcoming rows.")
@@ -777,7 +804,7 @@ def run_pipeline(
                 ) from None
 
     if upcoming_frame.empty and not odds_empty_without_fallback:
-        upcoming_frame = build_prediction_frame(feature_frame)
+        upcoming_frame = schedule_upcoming_frame.copy()
         upcoming_source = "nflverse"
 
     upcoming_scored = score_upcoming_games(final_model, upcoming_frame)
