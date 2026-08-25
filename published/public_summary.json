@@ -1,6 +1,6 @@
 {
   "holdout_accuracy": 0.6544117647058824,
-  "holdout_brier_score": 0.21175537029175223,
+  "holdout_brier_score": 0.21175537029175226,
   "holdout_roc_auc": 0.7167862578821482,
   "moneyline_bet_tracking": {
     "latest_graded_week": null,
@@ -51,6 +51,6 @@
     }
   },
   "upcoming_source": "odds_api",
-  "updated_at_et": "2026-08-24T13:02:03.889022-04:00",
-  "updated_at_utc": "2026-08-24T17:02:03.889022+00:00"
+  "updated_at_et": "2026-08-25T13:03:33.511505-04:00",
+  "updated_at_utc": "2026-08-25T17:03:33.511505+00:00"
 }
