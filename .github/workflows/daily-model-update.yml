@@ -27,7 +27,8 @@ jobs:
 
           now_utc = datetime.now(timezone.utc)
           now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
-          should_run = now_et.hour == 12 and now_et.minute == 0
+          # Scheduled runs can start several minutes late; allow the full noon ET hour.
+          should_run = now_et.hour == 12
 
           print(f"UTC time: {now_utc.isoformat()}")
           print(f"ET time: {now_et.isoformat()}")
