@@ -12,11 +12,17 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from train_model import run_pipeline
+from train_model import (
+    ACTIONABLE_THRESHOLDS_PATH,
+    load_actionable_thresholds,
+    run_pipeline,
+    save_actionable_thresholds,
+)
 
 ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
+CALIBRATION_REPORT_PATH = ARTIFACT_DIR / "calibration_report.json"
 HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
 HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
@@ -26,6 +32,8 @@ PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
+PUBLIC_CLV_MONEYLINE_PATH = PUBLISHED_DIR / "clv_watchlist_moneyline.csv"
+PUBLIC_CLV_TOTALS_PATH = PUBLISHED_DIR / "clv_watchlist_totals.csv"
 
 st.set_page_config(page_title="NFL Model Admin", layout="wide")
 st.title("NFL Moneyline Model - Admin")
@@ -37,6 +45,7 @@ github_token = st.secrets.get("GITHUB_TOKEN", "")
 github_repo = st.secrets.get("GITHUB_REPO", "")
 github_workflow = st.secrets.get("GITHUB_WORKFLOW_FILE", "daily-model-update.yml")
 github_ref = st.secrets.get("GITHUB_REF", "main")
+configured_actionable_thresholds = load_actionable_thresholds()
 
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
@@ -91,6 +100,8 @@ with st.expander("Configuration status", expanded=True):
     st.write(f"GITHUB_REPO resolved slug: {normalize_repo_slug(github_repo) or 'invalid/not set'}")
     st.write(f"GITHUB_WORKFLOW_FILE: {github_workflow}")
     st.write(f"GITHUB_REF: {github_ref}")
+    st.write(f"Actionable thresholds config path: {ACTIONABLE_THRESHOLDS_PATH}")
+    st.json(configured_actionable_thresholds)
 
 
 def load_json(path: Path) -> dict:
@@ -210,6 +221,61 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Run model now")
+    st.caption("Edit actionable thresholds used for Top Plays filtering.")
+    ml_col1, ml_col2 = st.columns(2)
+    ml_min_edge = ml_col1.number_input(
+        "Moneyline min edge (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(configured_actionable_thresholds["moneyline"]["min_edge_pct"]),
+        step=0.1,
+    )
+    ml_min_ev = ml_col2.number_input(
+        "Moneyline min EV ($/1)",
+        min_value=-1.0,
+        max_value=5.0,
+        value=float(configured_actionable_thresholds["moneyline"]["min_ev_per_dollar"]),
+        step=0.01,
+    )
+
+    tot_col1, tot_col2, tot_col3 = st.columns(3)
+    tot_min_edge = tot_col1.number_input(
+        "Totals min edge (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(configured_actionable_thresholds["totals"]["min_edge_pct"]),
+        step=0.1,
+    )
+    tot_min_ev = tot_col2.number_input(
+        "Totals min EV ($/1)",
+        min_value=-1.0,
+        max_value=5.0,
+        value=float(configured_actionable_thresholds["totals"]["min_ev_per_dollar"]),
+        step=0.01,
+    )
+    tot_min_projected_edge = tot_col3.number_input(
+        "Totals min |proj-line|",
+        min_value=0.0,
+        max_value=20.0,
+        value=float(configured_actionable_thresholds["totals"]["min_projected_total_edge"]),
+        step=0.1,
+    )
+    selected_actionable_thresholds = {
+        "moneyline": {
+            "min_edge_pct": float(ml_min_edge),
+            "min_ev_per_dollar": float(ml_min_ev),
+        },
+        "totals": {
+            "min_edge_pct": float(tot_min_edge),
+            "min_ev_per_dollar": float(tot_min_ev),
+            "min_projected_total_edge": float(tot_min_projected_edge),
+        },
+    }
+    if st.button("Save Top Plays thresholds"):
+        saved = save_actionable_thresholds(selected_actionable_thresholds)
+        st.success(f"Saved to {ACTIONABLE_THRESHOLDS_PATH}")
+        st.json(saved)
+
     allow_odds_fallback = st.checkbox(
         "Allow fallback to schedule feed if Odds API fails",
         value=False,
@@ -225,10 +291,12 @@ with col1:
                     odds_api_key,
                     use_odds_api=True,
                     allow_odds_fallback=allow_odds_fallback,
+                    actionable_thresholds=selected_actionable_thresholds,
                 )
             st.success(
                 f"Done. Source: {result['upcoming_source']}. "
-                f"Upcoming games scored: {result['upcoming_rows']}."
+                f"Upcoming games scored: {result['upcoming_rows']}. "
+                f"Thresholds: {json.dumps(result['actionable_thresholds'])}"
             )
         except Exception as exc:
             st.error(
@@ -249,6 +317,7 @@ with col2:
 st.divider()
 
 metrics = load_json(METRICS_PATH)
+calibration_report = load_json(CALIBRATION_REPORT_PATH)
 public_summary = load_json(PUBLIC_SUMMARY_PATH)
 upcoming = load_csv(UPCOMING_PATH)
 upcoming_totals = load_csv(UPCOMING_TOTALS_PATH)
@@ -258,6 +327,8 @@ public_picks = load_csv(PUBLIC_PICKS_PATH)
 public_totals = load_csv(PUBLIC_TOTALS_PATH)
 bet_history = load_csv(PUBLIC_BET_HISTORY_PATH)
 totals_bet_history = load_csv(PUBLIC_TOTAL_BET_HISTORY_PATH)
+clv_moneyline_watchlist = load_csv(PUBLIC_CLV_MONEYLINE_PATH)
+clv_totals_watchlist = load_csv(PUBLIC_CLV_TOTALS_PATH)
 
 if metrics:
     st.subheader("Model metrics")
@@ -282,6 +353,21 @@ if metrics:
             f"Train rows: {int(total_m.get('train_rows', 0)):,} | "
             f"Test rows: {int(total_m.get('test_rows', 0)):,}"
         )
+    calibration = metrics.get("calibration", calibration_report)
+    if isinstance(calibration, dict):
+        st.subheader("Calibration snapshot (holdout)")
+        cal_ml = calibration.get("moneyline", {})
+        cal_tot = calibration.get("totals", {})
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Moneyline ECE", f"{float(cal_ml.get('ece', 0.0)):.3f}")
+        c2.metric("Moneyline MCE", f"{float(cal_ml.get('mce', 0.0)):.3f}")
+        c3.metric("Totals ECE", f"{float(cal_tot.get('ece', 0.0)):.3f}")
+        c4.metric("Totals MCE", f"{float(cal_tot.get('mce', 0.0)):.3f}")
+        with st.expander("Calibration bin details"):
+            st.write("Moneyline bins")
+            st.dataframe(pd.DataFrame(cal_ml.get("bins", [])), use_container_width=True, hide_index=True)
+            st.write("Totals bins")
+            st.dataframe(pd.DataFrame(cal_tot.get("bins", [])), use_container_width=True, hide_index=True)
 
 if public_summary:
     st.subheader("Public feed status")
@@ -311,6 +397,10 @@ if public_summary:
             (total_tracking.get("ytd") or {}).get("record", "0-0"),
             f"{(total_tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
         )
+    actionable = public_summary.get("actionable_thresholds", {})
+    if actionable:
+        st.subheader("Top Plays actionability filters")
+        st.json(actionable)
 
 if not public_picks.empty:
     st.subheader("Published picks preview")
@@ -343,3 +433,11 @@ if not bet_history.empty:
 if not totals_bet_history.empty:
     st.subheader("Totals bet history (admin)")
     st.dataframe(totals_bet_history.head(100), use_container_width=True, hide_index=True)
+
+if not clv_moneyline_watchlist.empty:
+    st.subheader("CLV moneyline watchlist (hooks)")
+    st.dataframe(clv_moneyline_watchlist.head(100), use_container_width=True, hide_index=True)
+
+if not clv_totals_watchlist.empty:
+    st.subheader("CLV totals watchlist (hooks)")
+    st.dataframe(clv_totals_watchlist.head(100), use_container_width=True, hide_index=True)

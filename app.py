@@ -16,6 +16,11 @@ PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
 PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 
+DEFAULT_ACTIONABLE_THRESHOLDS = {
+    "moneyline": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0},
+    "totals": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+}
+
 st.set_page_config(page_title="NFL Picks Board", layout="wide")
 st.markdown(
     """
@@ -556,6 +561,32 @@ def get_tracking(summary: dict, key: str) -> dict:
     return {}
 
 
+def get_actionable_thresholds(summary: dict) -> dict:
+    configured = summary.get("actionable_thresholds", {})
+    moneyline = configured.get("moneyline", {})
+    totals = configured.get("totals", {})
+    return {
+        "moneyline": {
+            "min_edge_pct": float(moneyline.get("min_edge_pct", DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_edge_pct"])),
+            "min_ev_per_dollar": float(
+                moneyline.get("min_ev_per_dollar", DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_ev_per_dollar"])
+            ),
+        },
+        "totals": {
+            "min_edge_pct": float(totals.get("min_edge_pct", DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_edge_pct"])),
+            "min_ev_per_dollar": float(
+                totals.get("min_ev_per_dollar", DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_ev_per_dollar"])
+            ),
+            "min_projected_total_edge": float(
+                totals.get(
+                    "min_projected_total_edge",
+                    DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_projected_total_edge"],
+                )
+            ),
+        },
+    }
+
+
 def format_last_updated_et(raw_value: object) -> str:
     parsed = pd.to_datetime(raw_value, errors="coerce")
     if pd.isna(parsed):
@@ -586,6 +617,7 @@ def render_record_bar(summary: dict) -> None:
 summary = load_summary()
 moneyline_picks = load_csv(PUBLIC_PICKS_PATH)
 totals_picks = load_csv(PUBLIC_TOTALS_PATH)
+actionable_thresholds = get_actionable_thresholds(summary)
 
 header_col, refresh_col = st.columns([6, 1])
 with header_col:
@@ -648,10 +680,24 @@ else:
             ].copy()
             render_table_safe(table_frame)
             st.subheader("Top Moneyline Plays")
-            top = slate_frame[slate_frame["edge_pct"] > 0].copy()
+            ml_edge = pd.to_numeric(
+                slate_frame.get("edge_pct", pd.Series(index=slate_frame.index, dtype=float)),
+                errors="coerce",
+            )
+            ml_ev = pd.to_numeric(
+                slate_frame.get("recommended_ev_per_dollar", pd.Series(index=slate_frame.index, dtype=float)),
+                errors="coerce",
+            )
+            ml_rules = actionable_thresholds["moneyline"]
+            top = slate_frame[
+                ml_edge.ge(ml_rules["min_edge_pct"]) & ml_ev.ge(ml_rules["min_ev_per_dollar"])
+            ].copy()
             top = top.sort_values(["confidence_pct", "edge_pct"], ascending=False).head(5)
             if top.empty:
-                st.caption("No positive-edge moneyline plays on this slate.")
+                st.caption(
+                    "No actionable moneyline plays on this slate "
+                    f"(Edge >= {ml_rules['min_edge_pct']:.1f}%, EV >= {ml_rules['min_ev_per_dollar']:.2f})."
+                )
             else:
                 render_table_safe(top[["Game Time (ET)", "Away", "Home", "Mkt", "Fair", "Pick", "Edge", "Confidence"]])
 
@@ -669,10 +715,32 @@ else:
             ].copy()
             render_table_safe(table_frame)
             st.subheader("Top Totals Plays")
-            top = slate_frame[slate_frame["edge_pct"] > 0].copy()
+            totals_rules = actionable_thresholds["totals"]
+            total_edge = pd.to_numeric(
+                slate_frame.get("edge_pct", pd.Series(index=slate_frame.index, dtype=float)),
+                errors="coerce",
+            )
+            total_ev = pd.to_numeric(
+                slate_frame.get("recommended_total_ev_per_dollar", pd.Series(index=slate_frame.index, dtype=float)),
+                errors="coerce",
+            )
+            projected_edge = pd.to_numeric(
+                slate_frame.get("projected_total_edge", pd.Series(index=slate_frame.index, dtype=float)),
+                errors="coerce",
+            ).abs()
+            top = slate_frame[
+                total_edge.ge(totals_rules["min_edge_pct"])
+                & total_ev.ge(totals_rules["min_ev_per_dollar"])
+                & projected_edge.ge(totals_rules["min_projected_total_edge"])
+            ].copy()
             top = top.sort_values(["confidence_pct", "edge_pct"], ascending=False).head(5)
             if top.empty:
-                st.caption("No positive-edge totals plays on this slate.")
+                st.caption(
+                    "No actionable totals plays on this slate "
+                    "(Edge >= "
+                    f"{totals_rules['min_edge_pct']:.1f}%, EV >= {totals_rules['min_ev_per_dollar']:.2f}, "
+                    f"|Projected vs Line| >= {totals_rules['min_projected_total_edge']:.1f})."
+                )
             else:
                 render_table_safe(
                     top[["Game Time (ET)", "Away", "Home", "Total", "Mkt", "Fair", "Pick", "Edge", "Confidence"]]
