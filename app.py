@@ -18,7 +18,11 @@ PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 
 DEFAULT_ACTIONABLE_THRESHOLDS = {
     "moneyline": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0},
-    "totals": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+    "totals": {
+        "overall": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+        "over": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+        "under": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+    },
 }
 
 st.set_page_config(page_title="NFL Picks Board", layout="wide")
@@ -562,27 +566,68 @@ def get_tracking(summary: dict, key: str) -> dict:
 
 
 def get_actionable_thresholds(summary: dict) -> dict:
+    def _coerce(value: object, fallback: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return float(fallback)
+        if pd.isna(parsed):
+            return float(fallback)
+        return float(parsed)
+
     configured = summary.get("actionable_thresholds", {})
     moneyline = configured.get("moneyline", {})
     totals = configured.get("totals", {})
+    totals = totals if isinstance(totals, dict) else {}
+    totals_overall = totals.get("overall", {}) if isinstance(totals.get("overall"), dict) else {}
+    totals_legacy = totals
+
+    overall = {
+        "min_edge_pct": _coerce(
+            totals_overall.get("min_edge_pct", totals_legacy.get("min_edge_pct")),
+            DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["overall"]["min_edge_pct"],
+        ),
+        "min_ev_per_dollar": _coerce(
+            totals_overall.get("min_ev_per_dollar", totals_legacy.get("min_ev_per_dollar")),
+            DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["overall"]["min_ev_per_dollar"],
+        ),
+        "min_projected_total_edge": _coerce(
+            totals_overall.get("min_projected_total_edge", totals_legacy.get("min_projected_total_edge")),
+            DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["overall"]["min_projected_total_edge"],
+        ),
+    }
+
+    totals_over = totals.get("over", {}) if isinstance(totals.get("over"), dict) else {}
+    totals_under = totals.get("under", {}) if isinstance(totals.get("under"), dict) else {}
+
     return {
         "moneyline": {
-            "min_edge_pct": float(moneyline.get("min_edge_pct", DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_edge_pct"])),
-            "min_ev_per_dollar": float(
+            "min_edge_pct": _coerce(
+                moneyline.get("min_edge_pct"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_edge_pct"],
+            ),
+            "min_ev_per_dollar": _coerce(
                 moneyline.get("min_ev_per_dollar", DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_ev_per_dollar"])
             ),
         },
         "totals": {
-            "min_edge_pct": float(totals.get("min_edge_pct", DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_edge_pct"])),
-            "min_ev_per_dollar": float(
-                totals.get("min_ev_per_dollar", DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_ev_per_dollar"])
-            ),
-            "min_projected_total_edge": float(
-                totals.get(
-                    "min_projected_total_edge",
-                    DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_projected_total_edge"],
-                )
-            ),
+            "overall": overall,
+            "over": {
+                "min_edge_pct": _coerce(totals_over.get("min_edge_pct"), overall["min_edge_pct"]),
+                "min_ev_per_dollar": _coerce(totals_over.get("min_ev_per_dollar"), overall["min_ev_per_dollar"]),
+                "min_projected_total_edge": _coerce(
+                    totals_over.get("min_projected_total_edge"),
+                    overall["min_projected_total_edge"],
+                ),
+            },
+            "under": {
+                "min_edge_pct": _coerce(totals_under.get("min_edge_pct"), overall["min_edge_pct"]),
+                "min_ev_per_dollar": _coerce(totals_under.get("min_ev_per_dollar"), overall["min_ev_per_dollar"]),
+                "min_projected_total_edge": _coerce(
+                    totals_under.get("min_projected_total_edge"),
+                    overall["min_projected_total_edge"],
+                ),
+            },
         },
     }
 
@@ -716,6 +761,8 @@ else:
             render_table_safe(table_frame)
             st.subheader("Top Totals Plays")
             totals_rules = actionable_thresholds["totals"]
+            over_rules = totals_rules.get("over", totals_rules.get("overall", {}))
+            under_rules = totals_rules.get("under", totals_rules.get("overall", {}))
             total_edge = pd.to_numeric(
                 slate_frame.get("edge_pct", pd.Series(index=slate_frame.index, dtype=float)),
                 errors="coerce",
@@ -728,18 +775,45 @@ else:
                 slate_frame.get("projected_total_edge", pd.Series(index=slate_frame.index, dtype=float)),
                 errors="coerce",
             ).abs()
+            side_text = slate_frame.get(
+                "Pick",
+                slate_frame.get("recommended_total_side", pd.Series(index=slate_frame.index, dtype=object)),
+            )
+            is_over_pick = side_text.astype(str).str.upper().eq("OVER")
+            edge_threshold = pd.Series(
+                np.where(is_over_pick, over_rules["min_edge_pct"], under_rules["min_edge_pct"]),
+                index=slate_frame.index,
+                dtype=float,
+            )
+            ev_threshold = pd.Series(
+                np.where(is_over_pick, over_rules["min_ev_per_dollar"], under_rules["min_ev_per_dollar"]),
+                index=slate_frame.index,
+                dtype=float,
+            )
+            projected_threshold = pd.Series(
+                np.where(
+                    is_over_pick,
+                    over_rules["min_projected_total_edge"],
+                    under_rules["min_projected_total_edge"],
+                ),
+                index=slate_frame.index,
+                dtype=float,
+            )
             top = slate_frame[
-                total_edge.ge(totals_rules["min_edge_pct"])
-                & total_ev.ge(totals_rules["min_ev_per_dollar"])
-                & projected_edge.ge(totals_rules["min_projected_total_edge"])
+                total_edge.ge(edge_threshold)
+                & total_ev.ge(ev_threshold)
+                & projected_edge.ge(projected_threshold)
             ].copy()
             top = top.sort_values(["confidence_pct", "edge_pct"], ascending=False).head(5)
             if top.empty:
                 st.caption(
-                    "No actionable totals plays on this slate "
-                    "(Edge >= "
-                    f"{totals_rules['min_edge_pct']:.1f}%, EV >= {totals_rules['min_ev_per_dollar']:.2f}, "
-                    f"|Projected vs Line| >= {totals_rules['min_projected_total_edge']:.1f})."
+                    "No actionable totals plays on this slate. "
+                    f"OVER rules: Edge >= {over_rules['min_edge_pct']:.1f}%, "
+                    f"EV >= {over_rules['min_ev_per_dollar']:.2f}, "
+                    f"|Projected vs Line| >= {over_rules['min_projected_total_edge']:.1f}. "
+                    f"UNDER rules: Edge >= {under_rules['min_edge_pct']:.1f}%, "
+                    f"EV >= {under_rules['min_ev_per_dollar']:.2f}, "
+                    f"|Projected vs Line| >= {under_rules['min_projected_total_edge']:.1f}."
                 )
             else:
                 render_table_safe(

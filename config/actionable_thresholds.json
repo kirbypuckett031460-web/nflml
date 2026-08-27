@@ -4,8 +4,20 @@
     "min_ev_per_dollar": 0.0
   },
   "totals": {
-    "min_edge_pct": 2.0,
-    "min_ev_per_dollar": 0.0,
-    "min_projected_total_edge": 1.0
+    "overall": {
+      "min_edge_pct": 2.0,
+      "min_ev_per_dollar": 0.0,
+      "min_projected_total_edge": 1.0
+    },
+    "over": {
+      "min_edge_pct": 2.0,
+      "min_ev_per_dollar": 0.0,
+      "min_projected_total_edge": 1.0
+    },
+    "under": {
+      "min_edge_pct": 2.0,
+      "min_ev_per_dollar": 0.0,
+      "min_projected_total_edge": 1.0
+    }
   }
 }
