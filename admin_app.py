@@ -17,6 +17,7 @@ from train_model import run_pipeline
 ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
+CALIBRATION_REPORT_PATH = ARTIFACT_DIR / "calibration_report.json"
 HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
 HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
@@ -26,6 +27,8 @@ PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
+PUBLIC_CLV_MONEYLINE_PATH = PUBLISHED_DIR / "clv_watchlist_moneyline.csv"
+PUBLIC_CLV_TOTALS_PATH = PUBLISHED_DIR / "clv_watchlist_totals.csv"
 
 st.set_page_config(page_title="NFL Model Admin", layout="wide")
 st.title("NFL Moneyline Model - Admin")
@@ -249,6 +252,7 @@ with col2:
 st.divider()
 
 metrics = load_json(METRICS_PATH)
+calibration_report = load_json(CALIBRATION_REPORT_PATH)
 public_summary = load_json(PUBLIC_SUMMARY_PATH)
 upcoming = load_csv(UPCOMING_PATH)
 upcoming_totals = load_csv(UPCOMING_TOTALS_PATH)
@@ -258,6 +262,8 @@ public_picks = load_csv(PUBLIC_PICKS_PATH)
 public_totals = load_csv(PUBLIC_TOTALS_PATH)
 bet_history = load_csv(PUBLIC_BET_HISTORY_PATH)
 totals_bet_history = load_csv(PUBLIC_TOTAL_BET_HISTORY_PATH)
+clv_moneyline_watchlist = load_csv(PUBLIC_CLV_MONEYLINE_PATH)
+clv_totals_watchlist = load_csv(PUBLIC_CLV_TOTALS_PATH)
 
 if metrics:
     st.subheader("Model metrics")
@@ -282,6 +288,21 @@ if metrics:
             f"Train rows: {int(total_m.get('train_rows', 0)):,} | "
             f"Test rows: {int(total_m.get('test_rows', 0)):,}"
         )
+    calibration = metrics.get("calibration", calibration_report)
+    if isinstance(calibration, dict):
+        st.subheader("Calibration snapshot (holdout)")
+        cal_ml = calibration.get("moneyline", {})
+        cal_tot = calibration.get("totals", {})
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Moneyline ECE", f"{float(cal_ml.get('ece', 0.0)):.3f}")
+        c2.metric("Moneyline MCE", f"{float(cal_ml.get('mce', 0.0)):.3f}")
+        c3.metric("Totals ECE", f"{float(cal_tot.get('ece', 0.0)):.3f}")
+        c4.metric("Totals MCE", f"{float(cal_tot.get('mce', 0.0)):.3f}")
+        with st.expander("Calibration bin details"):
+            st.write("Moneyline bins")
+            st.dataframe(pd.DataFrame(cal_ml.get("bins", [])), use_container_width=True, hide_index=True)
+            st.write("Totals bins")
+            st.dataframe(pd.DataFrame(cal_tot.get("bins", [])), use_container_width=True, hide_index=True)
 
 if public_summary:
     st.subheader("Public feed status")
@@ -311,6 +332,10 @@ if public_summary:
             (total_tracking.get("ytd") or {}).get("record", "0-0"),
             f"{(total_tracking.get('ytd') or {}).get('win_pct', 0):.1%}",
         )
+    actionable = public_summary.get("actionable_thresholds", {})
+    if actionable:
+        st.subheader("Top Plays actionability filters")
+        st.json(actionable)
 
 if not public_picks.empty:
     st.subheader("Published picks preview")
@@ -343,3 +368,11 @@ if not bet_history.empty:
 if not totals_bet_history.empty:
     st.subheader("Totals bet history (admin)")
     st.dataframe(totals_bet_history.head(100), use_container_width=True, hide_index=True)
+
+if not clv_moneyline_watchlist.empty:
+    st.subheader("CLV moneyline watchlist (hooks)")
+    st.dataframe(clv_moneyline_watchlist.head(100), use_container_width=True, hide_index=True)
+
+if not clv_totals_watchlist.empty:
+    st.subheader("CLV totals watchlist (hooks)")
+    st.dataframe(clv_totals_watchlist.head(100), use_container_width=True, hide_index=True)

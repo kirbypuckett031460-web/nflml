@@ -41,11 +41,20 @@ HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
 HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
 UPCOMING_TOTALS_PATH = ARTIFACT_DIR / "upcoming_totals_predictions.csv"
+CALIBRATION_REPORT_PATH = ARTIFACT_DIR / "calibration_report.json"
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
 PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
 PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
+PUBLIC_CLV_MONEYLINE_PATH = PUBLISHED_DIR / "clv_watchlist_moneyline.csv"
+PUBLIC_CLV_TOTALS_PATH = PUBLISHED_DIR / "clv_watchlist_totals.csv"
+
+ACTIONABLE_MONEYLINE_MIN_EDGE_PCT = 2.0
+ACTIONABLE_MONEYLINE_MIN_EV_PER_DOLLAR = 0.0
+ACTIONABLE_TOTALS_MIN_EDGE_PCT = 2.0
+ACTIONABLE_TOTALS_MIN_EV_PER_DOLLAR = 0.0
+ACTIONABLE_TOTALS_MIN_PROJECTED_EDGE = 1.0
 
 
 def sanitize_error_message(message: object) -> str:
@@ -57,7 +66,7 @@ def normalize_categorical_columns(frame: pd.DataFrame) -> pd.DataFrame:
     """Convert categorical-typed columns to plain object values for stable ops."""
     normalized = frame.copy()
     for col in normalized.columns:
-        if pd.api.types.is_categorical_dtype(normalized[col]):
+        if isinstance(normalized[col].dtype, pd.CategoricalDtype):
             normalized[col] = normalized[col].astype("string").astype(object)
     return normalized
 
@@ -392,10 +401,262 @@ def assign_schedule_week(upcoming_frame: pd.DataFrame, schedule_frame: pd.DataFr
     return enriched
 
 
+def _compute_calibration_bins(
+    y_true: pd.Series,
+    y_prob: pd.Series,
+    *,
+    bin_count: int = 10,
+) -> dict[str, object]:
+    frame = pd.DataFrame(
+        {
+            "y_true": pd.to_numeric(y_true, errors="coerce"),
+            "y_prob": pd.to_numeric(y_prob, errors="coerce"),
+        }
+    ).dropna()
+    frame = frame[frame["y_prob"].between(0.0, 1.0)]
+    if frame.empty:
+        return {"n": 0, "ece": 0.0, "mce": 0.0, "bins": []}
+
+    frame = frame.sort_values("y_prob").reset_index(drop=True)
+    bins = min(max(bin_count, 1), len(frame))
+    frame["bin_id"] = (frame.index * bins) // len(frame)
+
+    bin_rows: list[dict[str, object]] = []
+    ece = 0.0
+    mce = 0.0
+    total_n = float(len(frame))
+    for bin_id, chunk in frame.groupby("bin_id", sort=True):
+        count = int(len(chunk))
+        avg_pred = float(chunk["y_prob"].mean())
+        actual_rate = float(chunk["y_true"].mean())
+        gap = abs(actual_rate - avg_pred)
+        weight = count / total_n
+        ece += gap * weight
+        mce = max(mce, gap)
+        bin_rows.append(
+            {
+                "bin": int(bin_id) + 1,
+                "count": count,
+                "prob_min": float(chunk["y_prob"].min()),
+                "prob_max": float(chunk["y_prob"].max()),
+                "avg_pred": avg_pred,
+                "actual_rate": actual_rate,
+                "gap": gap,
+            }
+        )
+
+    return {
+        "n": int(len(frame)),
+        "ece": float(ece),
+        "mce": float(mce),
+        "bins": bin_rows,
+    }
+
+
+def build_calibration_report(
+    holdout_scored: pd.DataFrame,
+    holdout_totals_scored: pd.DataFrame,
+) -> dict[str, object]:
+    moneyline = _compute_calibration_bins(
+        holdout_scored.get("home_win", pd.Series(dtype=float)),
+        holdout_scored.get("model_home_win_prob", pd.Series(dtype=float)),
+    )
+    totals = _compute_calibration_bins(
+        holdout_totals_scored.get("over_hit", pd.Series(dtype=float)),
+        holdout_totals_scored.get("model_over_prob", pd.Series(dtype=float)),
+    )
+    return {
+        "moneyline": moneyline,
+        "totals": totals,
+    }
+
+
+def build_clv_watchlists(
+    upcoming_scored: pd.DataFrame,
+    upcoming_totals_scored: pd.DataFrame,
+    snapshot_updated_at_utc: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def _fmt_week(value: object) -> str:
+        try:
+            if pd.isna(value):
+                return "na"
+            return str(int(float(value)))
+        except (TypeError, ValueError):
+            return "na"
+
+    if upcoming_scored.empty:
+        moneyline_watch = pd.DataFrame(
+            columns=[
+                "snapshot_updated_at_utc",
+                "pick_id",
+                "game_id",
+                "gameday",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "pick_side",
+                "pick_team",
+                "bookmaker",
+                "open_pick_odds",
+                "model_pick_prob",
+                "market_pick_prob",
+                "edge_pct",
+                "recommended_ev_per_dollar",
+                "closing_pick_odds",
+                "clv_american_delta",
+                "clv_status",
+            ]
+        )
+    else:
+        ml = upcoming_scored.copy()
+        if "bookmaker" not in ml.columns:
+            ml["bookmaker"] = "nflverse"
+        if "market_home_prob" not in ml.columns:
+            ml["market_home_prob"] = pd.NA
+        if "market_away_prob" not in ml.columns:
+            ml["market_away_prob"] = pd.NA
+        if "game_id" not in ml.columns:
+            ml["game_id"] = pd.NA
+        pick_is_home = ml["recommended_side"].eq("HOME")
+        ml["pick_side"] = ml["recommended_side"]
+        ml["pick_team"] = ml["home_team"].where(pick_is_home, ml["away_team"])
+        ml["open_pick_odds"] = ml["home_moneyline"].where(pick_is_home, ml["away_moneyline"])
+        ml["model_pick_prob"] = ml["model_home_win_prob"].where(pick_is_home, ml["model_away_win_prob"])
+        ml["market_pick_prob"] = ml["market_home_prob"].where(pick_is_home, ml["market_away_prob"])
+        ml["edge_pct"] = (
+            ml["edge_home_vs_market"].where(pick_is_home, ml["edge_away_vs_market"]) * 100.0
+        )
+        ml["snapshot_updated_at_utc"] = snapshot_updated_at_utc
+        ml["pick_id"] = ml.apply(
+            lambda row: (
+                f"ml|{row.get('season')}|w{_fmt_week(row.get('week'))}|"
+                f"{row.get('away_team')}@{row.get('home_team')}|{row.get('pick_side')}"
+            ),
+            axis=1,
+        )
+        ml["closing_pick_odds"] = pd.NA
+        ml["clv_american_delta"] = pd.NA
+        ml["clv_status"] = "pending"
+        moneyline_watch = ml[
+            [
+                "snapshot_updated_at_utc",
+                "pick_id",
+                "game_id",
+                "gameday",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "pick_side",
+                "pick_team",
+                "bookmaker",
+                "open_pick_odds",
+                "model_pick_prob",
+                "market_pick_prob",
+                "edge_pct",
+                "recommended_ev_per_dollar",
+                "closing_pick_odds",
+                "clv_american_delta",
+                "clv_status",
+            ]
+        ].copy()
+
+    if upcoming_totals_scored.empty:
+        totals_watch = pd.DataFrame(
+            columns=[
+                "snapshot_updated_at_utc",
+                "pick_id",
+                "game_id",
+                "gameday",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "pick_side",
+                "bookmaker",
+                "open_total_line",
+                "projected_total_points",
+                "projected_total_edge",
+                "open_pick_odds",
+                "model_pick_prob",
+                "market_pick_prob",
+                "edge_pct",
+                "recommended_total_ev_per_dollar",
+                "closing_total_line",
+                "closing_pick_odds",
+                "clv_total_line_delta",
+                "clv_american_delta",
+                "clv_status",
+            ]
+        )
+    else:
+        totals = upcoming_totals_scored.copy()
+        if "bookmaker" not in totals.columns:
+            totals["bookmaker"] = "nflverse"
+        if "market_over_prob" not in totals.columns:
+            totals["market_over_prob"] = pd.NA
+        if "market_under_prob" not in totals.columns:
+            totals["market_under_prob"] = pd.NA
+        if "game_id" not in totals.columns:
+            totals["game_id"] = pd.NA
+        pick_is_over = totals["recommended_total_side"].eq("OVER")
+        totals["pick_side"] = totals["recommended_total_side"]
+        totals["open_total_line"] = totals["total_line"]
+        totals["open_pick_odds"] = totals["over_odds"].where(pick_is_over, totals["under_odds"])
+        totals["model_pick_prob"] = totals["model_over_prob"].where(pick_is_over, totals["model_under_prob"])
+        totals["market_pick_prob"] = totals["market_over_prob"].where(pick_is_over, totals["market_under_prob"])
+        totals["edge_pct"] = (
+            totals["edge_over_vs_market"].where(pick_is_over, totals["edge_under_vs_market"]) * 100.0
+        )
+        totals["snapshot_updated_at_utc"] = snapshot_updated_at_utc
+        totals["pick_id"] = totals.apply(
+            lambda row: (
+                f"tot|{row.get('season')}|w{_fmt_week(row.get('week'))}|"
+                f"{row.get('away_team')}@{row.get('home_team')}|{row.get('pick_side')}"
+            ),
+            axis=1,
+        )
+        totals["closing_total_line"] = pd.NA
+        totals["closing_pick_odds"] = pd.NA
+        totals["clv_total_line_delta"] = pd.NA
+        totals["clv_american_delta"] = pd.NA
+        totals["clv_status"] = "pending"
+        totals_watch = totals[
+            [
+                "snapshot_updated_at_utc",
+                "pick_id",
+                "game_id",
+                "gameday",
+                "season",
+                "week",
+                "away_team",
+                "home_team",
+                "pick_side",
+                "bookmaker",
+                "open_total_line",
+                "projected_total_points",
+                "projected_total_edge",
+                "open_pick_odds",
+                "model_pick_prob",
+                "market_pick_prob",
+                "edge_pct",
+                "recommended_total_ev_per_dollar",
+                "closing_total_line",
+                "closing_pick_odds",
+                "clv_total_line_delta",
+                "clv_american_delta",
+                "clv_status",
+            ]
+        ].copy()
+
+    return moneyline_watch, totals_watch
+
+
 def export_public_outputs(
     upcoming_scored: pd.DataFrame,
     upcoming_totals_scored: pd.DataFrame,
-    metrics: dict[str, float],
+    metrics: dict[str, object],
     source: str,
     moneyline_bet_history: pd.DataFrame,
     total_bet_history: pd.DataFrame,
@@ -692,7 +953,60 @@ def export_public_outputs(
         ].sort_values(["gameday", "away_team", "home_team"])
         total_public.to_csv(PUBLIC_TOTAL_BET_HISTORY_PATH, index=False)
 
+    moneyline_edge = pd.to_numeric(public.get("recommended_confidence_pct"), errors="coerce")
+    # actionable edge uses model-vs-market edge columns if available
+    if "edge_home_vs_market" in public.columns and "edge_away_vs_market" in public.columns:
+        pick_is_home = public["recommended_side"].eq("HOME")
+        moneyline_actionable_edge = (
+            pd.to_numeric(public["edge_home_vs_market"], errors="coerce")
+            .where(pick_is_home, pd.to_numeric(public["edge_away_vs_market"], errors="coerce"))
+            * 100.0
+        )
+    else:
+        moneyline_actionable_edge = moneyline_edge
+    moneyline_actionable_ev = pd.to_numeric(
+        public.get("recommended_ev_per_dollar", pd.Series(index=public.index, dtype=float)),
+        errors="coerce",
+    )
+    moneyline_actionable_mask = (
+        moneyline_actionable_edge.ge(ACTIONABLE_MONEYLINE_MIN_EDGE_PCT)
+        & moneyline_actionable_ev.ge(ACTIONABLE_MONEYLINE_MIN_EV_PER_DOLLAR)
+    )
+
+    totals_edge = (
+        pd.to_numeric(public_totals["edge_over_vs_market"], errors="coerce")
+        if "edge_over_vs_market" in public_totals.columns
+        else pd.Series(index=public_totals.index, dtype=float)
+    )
+    pick_is_over_totals = public_totals.get("recommended_total_side", pd.Series(dtype=object)).eq("OVER")
+    if "edge_under_vs_market" in public_totals.columns:
+        totals_edge = totals_edge.where(
+            pick_is_over_totals, pd.to_numeric(public_totals["edge_under_vs_market"], errors="coerce")
+        )
+    totals_edge = totals_edge * 100.0
+    totals_actionable_ev = pd.to_numeric(
+        public_totals.get("recommended_total_ev_per_dollar", pd.Series(index=public_totals.index, dtype=float)),
+        errors="coerce",
+    )
+    projected_total_edge = pd.to_numeric(
+        public_totals.get("projected_total_edge", pd.Series(index=public_totals.index, dtype=float)),
+        errors="coerce",
+    ).abs()
+    totals_actionable_mask = (
+        totals_edge.ge(ACTIONABLE_TOTALS_MIN_EDGE_PCT)
+        & totals_actionable_ev.ge(ACTIONABLE_TOTALS_MIN_EV_PER_DOLLAR)
+        & projected_total_edge.ge(ACTIONABLE_TOTALS_MIN_PROJECTED_EDGE)
+    )
+
     now_utc = datetime.now(timezone.utc)
+    clv_moneyline, clv_totals = build_clv_watchlists(
+        upcoming_scored,
+        upcoming_totals_scored,
+        now_utc.isoformat(),
+    )
+    clv_moneyline.to_csv(PUBLIC_CLV_MONEYLINE_PATH, index=False)
+    clv_totals.to_csv(PUBLIC_CLV_TOTALS_PATH, index=False)
+
     summary = {
         "updated_at_utc": now_utc.isoformat(),
         "updated_at_et": now_utc.astimezone(ZoneInfo("America/New_York")).isoformat(),
@@ -704,6 +1018,27 @@ def export_public_outputs(
         "holdout_brier_score": float(metrics.get("brier_score", 0.0)),
         "moneyline_bet_tracking": moneyline_tracking_summary,
         "total_bet_tracking": total_tracking_summary,
+        "actionable_thresholds": {
+            "moneyline": {
+                "min_edge_pct": ACTIONABLE_MONEYLINE_MIN_EDGE_PCT,
+                "min_ev_per_dollar": ACTIONABLE_MONEYLINE_MIN_EV_PER_DOLLAR,
+            },
+            "totals": {
+                "min_edge_pct": ACTIONABLE_TOTALS_MIN_EDGE_PCT,
+                "min_ev_per_dollar": ACTIONABLE_TOTALS_MIN_EV_PER_DOLLAR,
+                "min_projected_total_edge": ACTIONABLE_TOTALS_MIN_PROJECTED_EDGE,
+            },
+        },
+        "actionable_counts": {
+            "moneyline": int(moneyline_actionable_mask.fillna(False).sum()),
+            "totals": int(totals_actionable_mask.fillna(False).sum()),
+        },
+        "clv_watchlists": {
+            "moneyline_path": str(PUBLIC_CLV_MONEYLINE_PATH),
+            "totals_path": str(PUBLIC_CLV_TOTALS_PATH),
+            "moneyline_rows": int(len(clv_moneyline)),
+            "totals_rows": int(len(clv_totals)),
+        },
     }
     with PUBLIC_SUMMARY_PATH.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, sort_keys=True)
@@ -756,6 +1091,8 @@ def run_pipeline(
         "test_rows": int(len(total_test)),
         "latest_test_season": int(total_test["season"].max()) if not total_test.empty else None,
     }
+    calibration_report = build_calibration_report(holdout_scored, holdout_total_scored)
+    metrics["calibration"] = calibration_report
 
     final_total_model = NFLTotalModel()
     final_total_model.fit(total_modeling_frame)
@@ -848,6 +1185,8 @@ def run_pipeline(
 
     with METRICS_PATH.open("w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2, sort_keys=True)
+    with CALIBRATION_REPORT_PATH.open("w", encoding="utf-8") as f:
+        json.dump(calibration_report, f, indent=2, sort_keys=True)
 
     holdout_scored.to_csv(HOLDOUT_PATH, index=False)
     holdout_total_scored.to_csv(HOLDOUT_TOTAL_PATH, index=False)
@@ -868,6 +1207,7 @@ def run_pipeline(
         "model_path": str(MODEL_PATH),
         "total_model_path": str(TOTAL_MODEL_PATH),
         "metrics_path": str(METRICS_PATH),
+        "calibration_report_path": str(CALIBRATION_REPORT_PATH),
         "holdout_path": str(HOLDOUT_PATH),
         "holdout_total_path": str(HOLDOUT_TOTAL_PATH),
         "upcoming_path": str(UPCOMING_PATH),
@@ -877,6 +1217,8 @@ def run_pipeline(
         "public_summary_path": str(PUBLIC_SUMMARY_PATH),
         "public_bet_history_path": str(PUBLIC_BET_HISTORY_PATH),
         "public_total_bet_history_path": str(PUBLIC_TOTAL_BET_HISTORY_PATH),
+        "clv_moneyline_watchlist_path": str(PUBLIC_CLV_MONEYLINE_PATH),
+        "clv_totals_watchlist_path": str(PUBLIC_CLV_TOTALS_PATH),
         "upcoming_source": upcoming_source,
         "upcoming_rows": int(len(upcoming_scored)),
         "upcoming_totals_rows": int(len(upcoming_totals_scored)),
@@ -918,6 +1260,7 @@ def main() -> None:
     print(f"Model saved to: {result['model_path']}")
     print(f"Total model saved to: {result['total_model_path']}")
     print(f"Metrics saved to: {result['metrics_path']}")
+    print(f"Calibration report saved to: {result['calibration_report_path']}")
     print(f"Holdout results saved to: {result['holdout_path']}")
     print(f"Holdout totals saved to: {result['holdout_total_path']}")
     print(f"Upcoming predictions saved to: {result['upcoming_path']}")
@@ -927,6 +1270,8 @@ def main() -> None:
     print(f"Public summary saved to: {result['public_summary_path']}")
     print(f"Public bet history saved to: {result['public_bet_history_path']}")
     print(f"Public totals bet history saved to: {result['public_total_bet_history_path']}")
+    print(f"CLV moneyline watchlist saved to: {result['clv_moneyline_watchlist_path']}")
+    print(f"CLV totals watchlist saved to: {result['clv_totals_watchlist_path']}")
     print(f"Upcoming source: {result['upcoming_source']}")
     print(f"Upcoming rows: {result['upcoming_rows']}")
     print(f"Upcoming totals rows: {result['upcoming_totals_rows']}")
