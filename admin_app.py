@@ -19,6 +19,15 @@ from train_model import (
     save_actionable_thresholds,
 )
 
+ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS = {
+    "moneyline": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0},
+    "totals": {
+        "overall": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+        "over": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+        "under": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
+    },
+}
+
 ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
@@ -45,7 +54,85 @@ github_token = st.secrets.get("GITHUB_TOKEN", "")
 github_repo = st.secrets.get("GITHUB_REPO", "")
 github_workflow = st.secrets.get("GITHUB_WORKFLOW_FILE", "daily-model-update.yml")
 github_ref = st.secrets.get("GITHUB_REF", "main")
-configured_actionable_thresholds = load_actionable_thresholds()
+
+
+def _coerce_threshold(value: object, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if pd.isna(parsed):
+        return float(fallback)
+    return float(parsed)
+
+
+def normalize_admin_actionable_thresholds(thresholds: dict[str, object] | None) -> dict[str, object]:
+    raw = thresholds if isinstance(thresholds, dict) else {}
+    moneyline_raw = raw.get("moneyline", {}) if isinstance(raw.get("moneyline"), dict) else {}
+    totals_raw = raw.get("totals", {}) if isinstance(raw.get("totals"), dict) else {}
+
+    totals_overall_raw = totals_raw.get("overall", {}) if isinstance(totals_raw.get("overall"), dict) else {}
+    # Backward compatibility for older flat totals config.
+    totals_legacy = totals_raw
+
+    overall = {
+        "min_edge_pct": _coerce_threshold(
+            totals_overall_raw.get("min_edge_pct", totals_legacy.get("min_edge_pct")),
+            ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["overall"]["min_edge_pct"],
+        ),
+        "min_ev_per_dollar": _coerce_threshold(
+            totals_overall_raw.get("min_ev_per_dollar", totals_legacy.get("min_ev_per_dollar")),
+            ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["overall"]["min_ev_per_dollar"],
+        ),
+        "min_projected_total_edge": _coerce_threshold(
+            totals_overall_raw.get("min_projected_total_edge", totals_legacy.get("min_projected_total_edge")),
+            ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["overall"]["min_projected_total_edge"],
+        ),
+    }
+    over_raw = totals_raw.get("over", {}) if isinstance(totals_raw.get("over"), dict) else {}
+    under_raw = totals_raw.get("under", {}) if isinstance(totals_raw.get("under"), dict) else {}
+
+    return {
+        "moneyline": {
+            "min_edge_pct": _coerce_threshold(
+                moneyline_raw.get("min_edge_pct"),
+                ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_edge_pct"],
+            ),
+            "min_ev_per_dollar": _coerce_threshold(
+                moneyline_raw.get("min_ev_per_dollar"),
+                ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_ev_per_dollar"],
+            ),
+        },
+        "totals": {
+            "overall": overall,
+            "over": {
+                "min_edge_pct": _coerce_threshold(over_raw.get("min_edge_pct"), overall["min_edge_pct"]),
+                "min_ev_per_dollar": _coerce_threshold(over_raw.get("min_ev_per_dollar"), overall["min_ev_per_dollar"]),
+                "min_projected_total_edge": _coerce_threshold(
+                    over_raw.get("min_projected_total_edge"),
+                    overall["min_projected_total_edge"],
+                ),
+            },
+            "under": {
+                "min_edge_pct": _coerce_threshold(under_raw.get("min_edge_pct"), overall["min_edge_pct"]),
+                "min_ev_per_dollar": _coerce_threshold(
+                    under_raw.get("min_ev_per_dollar"),
+                    overall["min_ev_per_dollar"],
+                ),
+                "min_projected_total_edge": _coerce_threshold(
+                    under_raw.get("min_projected_total_edge"),
+                    overall["min_projected_total_edge"],
+                ),
+            },
+        },
+    }
+
+
+try:
+    _loaded_actionable_thresholds = load_actionable_thresholds()
+except Exception:
+    _loaded_actionable_thresholds = {}
+configured_actionable_thresholds = normalize_admin_actionable_thresholds(_loaded_actionable_thresholds)
 
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
