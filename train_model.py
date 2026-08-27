@@ -57,9 +57,21 @@ DEFAULT_ACTIONABLE_THRESHOLDS = {
         "min_ev_per_dollar": 0.0,
     },
     "totals": {
-        "min_edge_pct": 2.0,
-        "min_ev_per_dollar": 0.0,
-        "min_projected_total_edge": 1.0,
+        "overall": {
+            "min_edge_pct": 2.0,
+            "min_ev_per_dollar": 0.0,
+            "min_projected_total_edge": 1.0,
+        },
+        "over": {
+            "min_edge_pct": 2.0,
+            "min_ev_per_dollar": 0.0,
+            "min_projected_total_edge": 1.0,
+        },
+        "under": {
+            "min_edge_pct": 2.0,
+            "min_ev_per_dollar": 0.0,
+            "min_projected_total_edge": 1.0,
+        },
     },
 }
 
@@ -79,9 +91,51 @@ def _coerce_threshold(value: object, fallback: float) -> float:
     return float(parsed)
 
 
-def normalize_actionable_thresholds(thresholds: dict[str, object] | None) -> dict[str, dict[str, float]]:
+def normalize_actionable_thresholds(thresholds: dict[str, object] | None) -> dict[str, object]:
     moneyline_raw = (thresholds or {}).get("moneyline", {}) if isinstance(thresholds, dict) else {}
     totals_raw = (thresholds or {}).get("totals", {}) if isinstance(thresholds, dict) else {}
+    totals_raw = totals_raw if isinstance(totals_raw, dict) else {}
+
+    totals_defaults = DEFAULT_ACTIONABLE_THRESHOLDS["totals"]
+    overall_defaults = totals_defaults["overall"]
+    legacy_overall_raw = totals_raw
+    overall_raw = totals_raw.get("overall", {}) if isinstance(totals_raw.get("overall"), dict) else {}
+
+    def _normalize_totals_side(raw: dict[str, object] | None, fallback: dict[str, float]) -> dict[str, float]:
+        source = raw if isinstance(raw, dict) else {}
+        return {
+            "min_edge_pct": _coerce_threshold(
+                source.get("min_edge_pct"),
+                fallback["min_edge_pct"],
+            ),
+            "min_ev_per_dollar": _coerce_threshold(
+                source.get("min_ev_per_dollar"),
+                fallback["min_ev_per_dollar"],
+            ),
+            "min_projected_total_edge": _coerce_threshold(
+                source.get("min_projected_total_edge"),
+                fallback["min_projected_total_edge"],
+            ),
+        }
+
+    # Backward compatibility: older configs stored totals thresholds directly under totals.*
+    overall_fallback = {
+        "min_edge_pct": _coerce_threshold(
+            overall_raw.get("min_edge_pct", legacy_overall_raw.get("min_edge_pct")),
+            overall_defaults["min_edge_pct"],
+        ),
+        "min_ev_per_dollar": _coerce_threshold(
+            overall_raw.get("min_ev_per_dollar", legacy_overall_raw.get("min_ev_per_dollar")),
+            overall_defaults["min_ev_per_dollar"],
+        ),
+        "min_projected_total_edge": _coerce_threshold(
+            overall_raw.get("min_projected_total_edge", legacy_overall_raw.get("min_projected_total_edge")),
+            overall_defaults["min_projected_total_edge"],
+        ),
+    }
+
+    over_raw = totals_raw.get("over", {}) if isinstance(totals_raw.get("over"), dict) else {}
+    under_raw = totals_raw.get("under", {}) if isinstance(totals_raw.get("under"), dict) else {}
 
     return {
         "moneyline": {
@@ -95,23 +149,14 @@ def normalize_actionable_thresholds(thresholds: dict[str, object] | None) -> dic
             ),
         },
         "totals": {
-            "min_edge_pct": _coerce_threshold(
-                totals_raw.get("min_edge_pct"),
-                DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_edge_pct"],
-            ),
-            "min_ev_per_dollar": _coerce_threshold(
-                totals_raw.get("min_ev_per_dollar"),
-                DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_ev_per_dollar"],
-            ),
-            "min_projected_total_edge": _coerce_threshold(
-                totals_raw.get("min_projected_total_edge"),
-                DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_projected_total_edge"],
-            ),
+            "overall": overall_fallback,
+            "over": _normalize_totals_side(over_raw, overall_fallback),
+            "under": _normalize_totals_side(under_raw, overall_fallback),
         },
     }
 
 
-def load_actionable_thresholds(path: Path = ACTIONABLE_THRESHOLDS_PATH) -> dict[str, dict[str, float]]:
+def load_actionable_thresholds(path: Path = ACTIONABLE_THRESHOLDS_PATH) -> dict[str, object]:
     if not path.exists():
         return normalize_actionable_thresholds(None)
     try:
@@ -124,7 +169,7 @@ def load_actionable_thresholds(path: Path = ACTIONABLE_THRESHOLDS_PATH) -> dict[
 def save_actionable_thresholds(
     thresholds: dict[str, object],
     path: Path = ACTIONABLE_THRESHOLDS_PATH,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, object]:
     normalized = normalize_actionable_thresholds(thresholds)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
@@ -731,7 +776,7 @@ def export_public_outputs(
     total_bet_history: pd.DataFrame,
     moneyline_tracking_summary: dict[str, object],
     total_tracking_summary: dict[str, object],
-    actionable_thresholds: dict[str, dict[str, float]],
+    actionable_thresholds: dict[str, object],
 ) -> None:
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1049,7 +1094,11 @@ def export_public_outputs(
         if "edge_over_vs_market" in public_totals.columns
         else pd.Series(index=public_totals.index, dtype=float)
     )
-    pick_is_over_totals = public_totals.get("recommended_total_side", pd.Series(dtype=object)).eq("OVER")
+    pick_side = public_totals.get(
+        "recommended_total_side",
+        pd.Series(index=public_totals.index, dtype=object),
+    )
+    pick_is_over_totals = pick_side.astype(str).str.upper().eq("OVER")
     if "edge_under_vs_market" in public_totals.columns:
         totals_edge = totals_edge.where(
             pick_is_over_totals, pd.to_numeric(public_totals["edge_under_vs_market"], errors="coerce")
@@ -1064,11 +1113,25 @@ def export_public_outputs(
         errors="coerce",
     ).abs()
     totals_rules = actionable_thresholds.get("totals", DEFAULT_ACTIONABLE_THRESHOLDS["totals"])
-    totals_actionable_mask = (
-        totals_edge.ge(float(totals_rules.get("min_edge_pct", 0.0)))
-        & totals_actionable_ev.ge(float(totals_rules.get("min_ev_per_dollar", 0.0)))
-        & projected_total_edge.ge(float(totals_rules.get("min_projected_total_edge", 0.0)))
+    totals_over_rules = totals_rules.get("over", totals_rules.get("overall", DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["over"]))
+    totals_under_rules = totals_rules.get(
+        "under",
+        totals_rules.get("overall", DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["under"]),
     )
+
+    totals_over_mask = (
+        pick_is_over_totals
+        & totals_edge.ge(float(totals_over_rules.get("min_edge_pct", 0.0)))
+        & totals_actionable_ev.ge(float(totals_over_rules.get("min_ev_per_dollar", 0.0)))
+        & projected_total_edge.ge(float(totals_over_rules.get("min_projected_total_edge", 0.0)))
+    )
+    totals_under_mask = (
+        (~pick_is_over_totals)
+        & totals_edge.ge(float(totals_under_rules.get("min_edge_pct", 0.0)))
+        & totals_actionable_ev.ge(float(totals_under_rules.get("min_ev_per_dollar", 0.0)))
+        & projected_total_edge.ge(float(totals_under_rules.get("min_projected_total_edge", 0.0)))
+    )
+    totals_actionable_mask = totals_over_mask | totals_under_mask
 
     now_utc = datetime.now(timezone.utc)
     clv_moneyline, clv_totals = build_clv_watchlists(
@@ -1094,6 +1157,8 @@ def export_public_outputs(
         "actionable_counts": {
             "moneyline": int(moneyline_actionable_mask.fillna(False).sum()),
             "totals": int(totals_actionable_mask.fillna(False).sum()),
+            "totals_over": int(totals_over_mask.fillna(False).sum()),
+            "totals_under": int(totals_under_mask.fillna(False).sum()),
         },
         "clv_watchlists": {
             "moneyline_path": str(PUBLIC_CLV_MONEYLINE_PATH),

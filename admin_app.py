@@ -238,26 +238,79 @@ with col1:
         step=0.01,
     )
 
-    tot_col1, tot_col2, tot_col3 = st.columns(3)
-    tot_min_edge = tot_col1.number_input(
-        "Totals min edge (%)",
+    totals_overall = configured_actionable_thresholds["totals"]["overall"]
+    totals_over = configured_actionable_thresholds["totals"]["over"]
+    totals_under = configured_actionable_thresholds["totals"]["under"]
+
+    st.markdown("**Totals baseline (fallback) rules**")
+    tot_base_col1, tot_base_col2, tot_base_col3 = st.columns(3)
+    tot_base_min_edge = tot_base_col1.number_input(
+        "Totals baseline min edge (%)",
         min_value=0.0,
         max_value=100.0,
-        value=float(configured_actionable_thresholds["totals"]["min_edge_pct"]),
+        value=float(totals_overall["min_edge_pct"]),
         step=0.1,
     )
-    tot_min_ev = tot_col2.number_input(
-        "Totals min EV ($/1)",
+    tot_base_min_ev = tot_base_col2.number_input(
+        "Totals baseline min EV ($/1)",
         min_value=-1.0,
         max_value=5.0,
-        value=float(configured_actionable_thresholds["totals"]["min_ev_per_dollar"]),
+        value=float(totals_overall["min_ev_per_dollar"]),
         step=0.01,
     )
-    tot_min_projected_edge = tot_col3.number_input(
-        "Totals min |proj-line|",
+    tot_base_min_projected_edge = tot_base_col3.number_input(
+        "Totals baseline min |proj-line|",
         min_value=0.0,
         max_value=20.0,
-        value=float(configured_actionable_thresholds["totals"]["min_projected_total_edge"]),
+        value=float(totals_overall["min_projected_total_edge"]),
+        step=0.1,
+    )
+
+    st.markdown("**OVER profile rules**")
+    over_col1, over_col2, over_col3 = st.columns(3)
+    over_min_edge = over_col1.number_input(
+        "OVER min edge (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(totals_over["min_edge_pct"]),
+        step=0.1,
+    )
+    over_min_ev = over_col2.number_input(
+        "OVER min EV ($/1)",
+        min_value=-1.0,
+        max_value=5.0,
+        value=float(totals_over["min_ev_per_dollar"]),
+        step=0.01,
+    )
+    over_min_projected_edge = over_col3.number_input(
+        "OVER min |proj-line|",
+        min_value=0.0,
+        max_value=20.0,
+        value=float(totals_over["min_projected_total_edge"]),
+        step=0.1,
+    )
+
+    st.markdown("**UNDER profile rules**")
+    under_col1, under_col2, under_col3 = st.columns(3)
+    under_min_edge = under_col1.number_input(
+        "UNDER min edge (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(totals_under["min_edge_pct"]),
+        step=0.1,
+    )
+    under_min_ev = under_col2.number_input(
+        "UNDER min EV ($/1)",
+        min_value=-1.0,
+        max_value=5.0,
+        value=float(totals_under["min_ev_per_dollar"]),
+        step=0.01,
+    )
+    under_min_projected_edge = under_col3.number_input(
+        "UNDER min |proj-line|",
+        min_value=0.0,
+        max_value=20.0,
+        value=float(totals_under["min_projected_total_edge"]),
         step=0.1,
     )
     selected_actionable_thresholds = {
@@ -266,9 +319,21 @@ with col1:
             "min_ev_per_dollar": float(ml_min_ev),
         },
         "totals": {
-            "min_edge_pct": float(tot_min_edge),
-            "min_ev_per_dollar": float(tot_min_ev),
-            "min_projected_total_edge": float(tot_min_projected_edge),
+            "overall": {
+                "min_edge_pct": float(tot_base_min_edge),
+                "min_ev_per_dollar": float(tot_base_min_ev),
+                "min_projected_total_edge": float(tot_base_min_projected_edge),
+            },
+            "over": {
+                "min_edge_pct": float(over_min_edge),
+                "min_ev_per_dollar": float(over_min_ev),
+                "min_projected_total_edge": float(over_min_projected_edge),
+            },
+            "under": {
+                "min_edge_pct": float(under_min_edge),
+                "min_ev_per_dollar": float(under_min_ev),
+                "min_projected_total_edge": float(under_min_projected_edge),
+            },
         },
     }
     if st.button("Save Top Plays thresholds"):
