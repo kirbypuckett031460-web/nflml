@@ -1,4 +1,25 @@
 {
+  "actionable_counts": {
+    "moneyline": 54,
+    "totals": 26
+  },
+  "actionable_thresholds": {
+    "moneyline": {
+      "min_edge_pct": 2.0,
+      "min_ev_per_dollar": 0.0
+    },
+    "totals": {
+      "min_edge_pct": 2.0,
+      "min_ev_per_dollar": 0.0,
+      "min_projected_total_edge": 1.0
+    }
+  },
+  "clv_watchlists": {
+    "moneyline_path": "published/clv_watchlist_moneyline.csv",
+    "moneyline_rows": 112,
+    "totals_path": "published/clv_watchlist_totals.csv",
+    "totals_rows": 112
+  },
   "holdout_accuracy": 0.6544117647058824,
   "holdout_brier_score": 0.21175537029175223,
   "holdout_roc_auc": 0.7167862578821482,
@@ -51,6 +72,6 @@
     }
   },
   "upcoming_source": "odds_api",
-  "updated_at_et": "2026-08-27T14:31:07.618900-04:00",
-  "updated_at_utc": "2026-08-27T18:31:07.618900+00:00"
+  "updated_at_et": "2026-08-27T14:44:17.109063-04:00",
+  "updated_at_utc": "2026-08-27T18:44:17.109063+00:00"
 }
