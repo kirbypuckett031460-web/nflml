@@ -49,17 +49,86 @@ PUBLIC_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history.csv"
 PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
 PUBLIC_CLV_MONEYLINE_PATH = PUBLISHED_DIR / "clv_watchlist_moneyline.csv"
 PUBLIC_CLV_TOTALS_PATH = PUBLISHED_DIR / "clv_watchlist_totals.csv"
+ACTIONABLE_THRESHOLDS_PATH = Path("config/actionable_thresholds.json")
 
-ACTIONABLE_MONEYLINE_MIN_EDGE_PCT = 2.0
-ACTIONABLE_MONEYLINE_MIN_EV_PER_DOLLAR = 0.0
-ACTIONABLE_TOTALS_MIN_EDGE_PCT = 2.0
-ACTIONABLE_TOTALS_MIN_EV_PER_DOLLAR = 0.0
-ACTIONABLE_TOTALS_MIN_PROJECTED_EDGE = 1.0
+DEFAULT_ACTIONABLE_THRESHOLDS = {
+    "moneyline": {
+        "min_edge_pct": 2.0,
+        "min_ev_per_dollar": 0.0,
+    },
+    "totals": {
+        "min_edge_pct": 2.0,
+        "min_ev_per_dollar": 0.0,
+        "min_projected_total_edge": 1.0,
+    },
+}
 
 
 def sanitize_error_message(message: object) -> str:
     text = str(message)
     return re.sub(r"(apiKey=)[^&\\s]+", r"\1[REDACTED]", text)
+
+
+def _coerce_threshold(value: object, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if pd.isna(parsed):
+        return float(fallback)
+    return float(parsed)
+
+
+def normalize_actionable_thresholds(thresholds: dict[str, object] | None) -> dict[str, dict[str, float]]:
+    moneyline_raw = (thresholds or {}).get("moneyline", {}) if isinstance(thresholds, dict) else {}
+    totals_raw = (thresholds or {}).get("totals", {}) if isinstance(thresholds, dict) else {}
+
+    return {
+        "moneyline": {
+            "min_edge_pct": _coerce_threshold(
+                moneyline_raw.get("min_edge_pct"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_edge_pct"],
+            ),
+            "min_ev_per_dollar": _coerce_threshold(
+                moneyline_raw.get("min_ev_per_dollar"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_ev_per_dollar"],
+            ),
+        },
+        "totals": {
+            "min_edge_pct": _coerce_threshold(
+                totals_raw.get("min_edge_pct"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_edge_pct"],
+            ),
+            "min_ev_per_dollar": _coerce_threshold(
+                totals_raw.get("min_ev_per_dollar"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_ev_per_dollar"],
+            ),
+            "min_projected_total_edge": _coerce_threshold(
+                totals_raw.get("min_projected_total_edge"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["totals"]["min_projected_total_edge"],
+            ),
+        },
+    }
+
+
+def load_actionable_thresholds(path: Path = ACTIONABLE_THRESHOLDS_PATH) -> dict[str, dict[str, float]]:
+    if not path.exists():
+        return normalize_actionable_thresholds(None)
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return normalize_actionable_thresholds(None)
+    return normalize_actionable_thresholds(parsed if isinstance(parsed, dict) else None)
+
+
+def save_actionable_thresholds(
+    thresholds: dict[str, object],
+    path: Path = ACTIONABLE_THRESHOLDS_PATH,
+) -> dict[str, dict[str, float]]:
+    normalized = normalize_actionable_thresholds(thresholds)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    return normalized
 
 
 def normalize_categorical_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -662,6 +731,7 @@ def export_public_outputs(
     total_bet_history: pd.DataFrame,
     moneyline_tracking_summary: dict[str, object],
     total_tracking_summary: dict[str, object],
+    actionable_thresholds: dict[str, dict[str, float]],
 ) -> None:
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -968,9 +1038,10 @@ def export_public_outputs(
         public.get("recommended_ev_per_dollar", pd.Series(index=public.index, dtype=float)),
         errors="coerce",
     )
+    moneyline_rules = actionable_thresholds.get("moneyline", DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"])
     moneyline_actionable_mask = (
-        moneyline_actionable_edge.ge(ACTIONABLE_MONEYLINE_MIN_EDGE_PCT)
-        & moneyline_actionable_ev.ge(ACTIONABLE_MONEYLINE_MIN_EV_PER_DOLLAR)
+        moneyline_actionable_edge.ge(float(moneyline_rules.get("min_edge_pct", 0.0)))
+        & moneyline_actionable_ev.ge(float(moneyline_rules.get("min_ev_per_dollar", 0.0)))
     )
 
     totals_edge = (
@@ -992,10 +1063,11 @@ def export_public_outputs(
         public_totals.get("projected_total_edge", pd.Series(index=public_totals.index, dtype=float)),
         errors="coerce",
     ).abs()
+    totals_rules = actionable_thresholds.get("totals", DEFAULT_ACTIONABLE_THRESHOLDS["totals"])
     totals_actionable_mask = (
-        totals_edge.ge(ACTIONABLE_TOTALS_MIN_EDGE_PCT)
-        & totals_actionable_ev.ge(ACTIONABLE_TOTALS_MIN_EV_PER_DOLLAR)
-        & projected_total_edge.ge(ACTIONABLE_TOTALS_MIN_PROJECTED_EDGE)
+        totals_edge.ge(float(totals_rules.get("min_edge_pct", 0.0)))
+        & totals_actionable_ev.ge(float(totals_rules.get("min_ev_per_dollar", 0.0)))
+        & projected_total_edge.ge(float(totals_rules.get("min_projected_total_edge", 0.0)))
     )
 
     now_utc = datetime.now(timezone.utc)
@@ -1018,17 +1090,7 @@ def export_public_outputs(
         "holdout_brier_score": float(metrics.get("brier_score", 0.0)),
         "moneyline_bet_tracking": moneyline_tracking_summary,
         "total_bet_tracking": total_tracking_summary,
-        "actionable_thresholds": {
-            "moneyline": {
-                "min_edge_pct": ACTIONABLE_MONEYLINE_MIN_EDGE_PCT,
-                "min_ev_per_dollar": ACTIONABLE_MONEYLINE_MIN_EV_PER_DOLLAR,
-            },
-            "totals": {
-                "min_edge_pct": ACTIONABLE_TOTALS_MIN_EDGE_PCT,
-                "min_ev_per_dollar": ACTIONABLE_TOTALS_MIN_EV_PER_DOLLAR,
-                "min_projected_total_edge": ACTIONABLE_TOTALS_MIN_PROJECTED_EDGE,
-            },
-        },
+        "actionable_thresholds": actionable_thresholds,
         "actionable_counts": {
             "moneyline": int(moneyline_actionable_mask.fillna(False).sum()),
             "totals": int(totals_actionable_mask.fillna(False).sum()),
@@ -1048,9 +1110,15 @@ def run_pipeline(
     odds_api_key: str | None,
     use_odds_api: bool = True,
     allow_odds_fallback: bool = False,
+    actionable_thresholds: dict[str, object] | None = None,
 ) -> dict[str, object]:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
+    resolved_actionable_thresholds = (
+        normalize_actionable_thresholds(actionable_thresholds)
+        if actionable_thresholds is not None
+        else load_actionable_thresholds()
+    )
 
     games = load_games_data()
     feature_frame = build_feature_frame(games)
@@ -1201,6 +1269,7 @@ def run_pipeline(
         total_bet_history,
         moneyline_tracking_summary,
         total_tracking_summary,
+        resolved_actionable_thresholds,
     )
 
     return {
@@ -1219,6 +1288,7 @@ def run_pipeline(
         "public_total_bet_history_path": str(PUBLIC_TOTAL_BET_HISTORY_PATH),
         "clv_moneyline_watchlist_path": str(PUBLIC_CLV_MONEYLINE_PATH),
         "clv_totals_watchlist_path": str(PUBLIC_CLV_TOTALS_PATH),
+        "actionable_thresholds_path": str(ACTIONABLE_THRESHOLDS_PATH),
         "upcoming_source": upcoming_source,
         "upcoming_rows": int(len(upcoming_scored)),
         "upcoming_totals_rows": int(len(upcoming_totals_scored)),
@@ -1226,6 +1296,7 @@ def run_pipeline(
         "moneyline_ytd_record": (moneyline_tracking_summary.get("ytd") or {}).get("record", "0-0"),
         "totals_tracking_season": total_tracking_summary.get("tracking_season"),
         "totals_ytd_record": (total_tracking_summary.get("ytd") or {}).get("record", "0-0"),
+        "actionable_thresholds": resolved_actionable_thresholds,
     }
 
 
@@ -1272,6 +1343,7 @@ def main() -> None:
     print(f"Public totals bet history saved to: {result['public_total_bet_history_path']}")
     print(f"CLV moneyline watchlist saved to: {result['clv_moneyline_watchlist_path']}")
     print(f"CLV totals watchlist saved to: {result['clv_totals_watchlist_path']}")
+    print(f"Actionable thresholds path: {result['actionable_thresholds_path']}")
     print(f"Upcoming source: {result['upcoming_source']}")
     print(f"Upcoming rows: {result['upcoming_rows']}")
     print(f"Upcoming totals rows: {result['upcoming_totals_rows']}")
@@ -1279,6 +1351,7 @@ def main() -> None:
     print(f"Moneyline YTD record: {result['moneyline_ytd_record']}")
     print(f"Totals tracking season: {result['totals_tracking_season']}")
     print(f"Totals YTD record: {result['totals_ytd_record']}")
+    print(f"Actionable thresholds used: {json.dumps(result['actionable_thresholds'], sort_keys=True)}")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,12 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from train_model import run_pipeline
+from train_model import (
+    ACTIONABLE_THRESHOLDS_PATH,
+    load_actionable_thresholds,
+    run_pipeline,
+    save_actionable_thresholds,
+)
 
 ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
@@ -40,6 +45,7 @@ github_token = st.secrets.get("GITHUB_TOKEN", "")
 github_repo = st.secrets.get("GITHUB_REPO", "")
 github_workflow = st.secrets.get("GITHUB_WORKFLOW_FILE", "daily-model-update.yml")
 github_ref = st.secrets.get("GITHUB_REF", "main")
+configured_actionable_thresholds = load_actionable_thresholds()
 
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
@@ -94,6 +100,8 @@ with st.expander("Configuration status", expanded=True):
     st.write(f"GITHUB_REPO resolved slug: {normalize_repo_slug(github_repo) or 'invalid/not set'}")
     st.write(f"GITHUB_WORKFLOW_FILE: {github_workflow}")
     st.write(f"GITHUB_REF: {github_ref}")
+    st.write(f"Actionable thresholds config path: {ACTIONABLE_THRESHOLDS_PATH}")
+    st.json(configured_actionable_thresholds)
 
 
 def load_json(path: Path) -> dict:
@@ -213,6 +221,61 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Run model now")
+    st.caption("Edit actionable thresholds used for Top Plays filtering.")
+    ml_col1, ml_col2 = st.columns(2)
+    ml_min_edge = ml_col1.number_input(
+        "Moneyline min edge (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(configured_actionable_thresholds["moneyline"]["min_edge_pct"]),
+        step=0.1,
+    )
+    ml_min_ev = ml_col2.number_input(
+        "Moneyline min EV ($/1)",
+        min_value=-1.0,
+        max_value=5.0,
+        value=float(configured_actionable_thresholds["moneyline"]["min_ev_per_dollar"]),
+        step=0.01,
+    )
+
+    tot_col1, tot_col2, tot_col3 = st.columns(3)
+    tot_min_edge = tot_col1.number_input(
+        "Totals min edge (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(configured_actionable_thresholds["totals"]["min_edge_pct"]),
+        step=0.1,
+    )
+    tot_min_ev = tot_col2.number_input(
+        "Totals min EV ($/1)",
+        min_value=-1.0,
+        max_value=5.0,
+        value=float(configured_actionable_thresholds["totals"]["min_ev_per_dollar"]),
+        step=0.01,
+    )
+    tot_min_projected_edge = tot_col3.number_input(
+        "Totals min |proj-line|",
+        min_value=0.0,
+        max_value=20.0,
+        value=float(configured_actionable_thresholds["totals"]["min_projected_total_edge"]),
+        step=0.1,
+    )
+    selected_actionable_thresholds = {
+        "moneyline": {
+            "min_edge_pct": float(ml_min_edge),
+            "min_ev_per_dollar": float(ml_min_ev),
+        },
+        "totals": {
+            "min_edge_pct": float(tot_min_edge),
+            "min_ev_per_dollar": float(tot_min_ev),
+            "min_projected_total_edge": float(tot_min_projected_edge),
+        },
+    }
+    if st.button("Save Top Plays thresholds"):
+        saved = save_actionable_thresholds(selected_actionable_thresholds)
+        st.success(f"Saved to {ACTIONABLE_THRESHOLDS_PATH}")
+        st.json(saved)
+
     allow_odds_fallback = st.checkbox(
         "Allow fallback to schedule feed if Odds API fails",
         value=False,
@@ -228,10 +291,12 @@ with col1:
                     odds_api_key,
                     use_odds_api=True,
                     allow_odds_fallback=allow_odds_fallback,
+                    actionable_thresholds=selected_actionable_thresholds,
                 )
             st.success(
                 f"Done. Source: {result['upcoming_source']}. "
-                f"Upcoming games scored: {result['upcoming_rows']}."
+                f"Upcoming games scored: {result['upcoming_rows']}. "
+                f"Thresholds: {json.dumps(result['actionable_thresholds'])}"
             )
         except Exception as exc:
             st.error(
