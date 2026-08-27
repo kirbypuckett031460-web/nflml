@@ -575,8 +575,10 @@ def get_actionable_thresholds(summary: dict) -> dict:
             return float(fallback)
         return float(parsed)
 
-    configured = summary.get("actionable_thresholds", {})
+    configured = summary.get("actionable_thresholds", {}) if isinstance(summary, dict) else {}
+    configured = configured if isinstance(configured, dict) else {}
     moneyline = configured.get("moneyline", {})
+    moneyline = moneyline if isinstance(moneyline, dict) else {}
     totals = configured.get("totals", {})
     totals = totals if isinstance(totals, dict) else {}
     totals_overall = totals.get("overall", {}) if isinstance(totals.get("overall"), dict) else {}
@@ -607,7 +609,8 @@ def get_actionable_thresholds(summary: dict) -> dict:
                 DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_edge_pct"],
             ),
             "min_ev_per_dollar": _coerce(
-                moneyline.get("min_ev_per_dollar", DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_ev_per_dollar"])
+                moneyline.get("min_ev_per_dollar"),
+                DEFAULT_ACTIONABLE_THRESHOLDS["moneyline"]["min_ev_per_dollar"],
             ),
         },
         "totals": {
