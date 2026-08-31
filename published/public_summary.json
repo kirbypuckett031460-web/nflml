@@ -1,8 +1,8 @@
 {
   "actionable_counts": {
     "moneyline": 59,
-    "totals": 27,
-    "totals_over": 27,
+    "totals": 26,
+    "totals_over": 26,
     "totals_under": 0
   },
   "actionable_thresholds": {
@@ -86,6 +86,6 @@
     }
   },
   "upcoming_source": "odds_api",
-  "updated_at_et": "2026-08-30T09:27:46.733743-04:00",
-  "updated_at_utc": "2026-08-30T13:27:46.733743+00:00"
+  "updated_at_et": "2026-08-31T14:10:54.308411-04:00",
+  "updated_at_utc": "2026-08-31T18:10:54.308411+00:00"
 }
