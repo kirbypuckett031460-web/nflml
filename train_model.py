@@ -17,8 +17,10 @@ from nfl_moneyline.data import load_games_data
 from nfl_moneyline.features import (
     build_external_prediction_frame,
     build_feature_frame,
+    build_home_environment_snapshot,
     build_modeling_frame,
     build_prediction_frame,
+    build_qb_continuity_snapshot,
     build_team_form_snapshot,
     build_total_modeling_frame,
 )
@@ -42,6 +44,7 @@ HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
 UPCOMING_TOTALS_PATH = ARTIFACT_DIR / "upcoming_totals_predictions.csv"
 CALIBRATION_REPORT_PATH = ARTIFACT_DIR / "calibration_report.json"
+WALKFORWARD_REPORT_PATH = ARTIFACT_DIR / "walkforward_report.json"
 PUBLIC_PICKS_PATH = PUBLISHED_DIR / "public_predictions.csv"
 PUBLIC_TOTALS_PATH = PUBLISHED_DIR / "public_totals_predictions.csv"
 PUBLIC_SUMMARY_PATH = PUBLISHED_DIR / "public_summary.json"
@@ -341,6 +344,214 @@ def build_total_bet_tracking_frame(model: NFLTotalModel, total_modeling_frame: p
     scored.loc[(~pick_is_over) & total_points.lt(total_line), "bet_result"] = "WIN"
     scored.loc[total_points.eq(total_line), "bet_result"] = "PUSH"
     return scored
+
+
+def _mean_or_none(values: list[float | None]) -> float | None:
+    valid = [float(v) for v in values if v is not None and not pd.isna(v)]
+    if not valid:
+        return None
+    return float(sum(valid) / len(valid))
+
+
+def _delta_or_none(model_value: float | None, market_value: float | None) -> float | None:
+    if model_value is None or market_value is None:
+        return None
+    if pd.isna(model_value) or pd.isna(market_value):
+        return None
+    return float(model_value - market_value)
+
+
+def _roi_from_picks(won_mask: pd.Series, pick_odds: pd.Series) -> float | None:
+    odds = pd.to_numeric(pick_odds, errors="coerce")
+    valid = odds.notna()
+    if not valid.any():
+        return None
+
+    won = won_mask.astype(bool)
+    profit_if_win = pd.Series(index=odds.index, dtype=float)
+    positive = odds > 0
+    negative = odds < 0
+    profit_if_win.loc[positive] = odds.loc[positive] / 100.0
+    profit_if_win.loc[negative] = 100.0 / odds.loc[negative].abs()
+    outcomes = won.astype(float) * profit_if_win - (~won).astype(float)
+    valid_outcomes = outcomes.loc[valid].dropna()
+    if valid_outcomes.empty:
+        return None
+    return float(valid_outcomes.mean())
+
+
+def build_walkforward_report(modeling_frame: pd.DataFrame, total_modeling_frame: pd.DataFrame) -> dict[str, object]:
+    """Generate season-by-season walk-forward validation report."""
+    moneyline_rows: list[dict[str, object]] = []
+    moneyline_seasons = sorted(pd.to_numeric(modeling_frame["season"], errors="coerce").dropna().astype(int).unique())
+    for season in moneyline_seasons:
+        train = modeling_frame[pd.to_numeric(modeling_frame["season"], errors="coerce") < season].copy()
+        test = modeling_frame[pd.to_numeric(modeling_frame["season"], errors="coerce") == season].copy()
+        if train.empty or test.empty:
+            continue
+
+        walk_model = NFLMoneylineModel()
+        walk_model.fit(train)
+        metrics, scored = evaluate_model(walk_model, test)
+
+        y_true = scored["home_win"].astype(int)
+        market_prob = pd.to_numeric(scored["market_home_prob"], errors="coerce")
+        market_pred = (market_prob >= 0.5).astype(int)
+        market_accuracy = None
+        market_auc = None
+        market_brier = None
+        valid_market = market_prob.notna()
+        if valid_market.any():
+            market_accuracy = float((market_pred[valid_market] == y_true[valid_market]).mean())
+        if valid_market.any() and y_true[valid_market].nunique() > 1:
+            try:
+                from sklearn.metrics import brier_score_loss, roc_auc_score
+
+                market_auc = float(roc_auc_score(y_true[valid_market], market_prob[valid_market]))
+                market_brier = float(brier_score_loss(y_true[valid_market], market_prob[valid_market]))
+            except Exception:
+                market_auc = None
+                market_brier = None
+
+        model_pick_home = scored["best_side"].eq("HOME")
+        model_pick_odds = scored["home_moneyline"].where(model_pick_home, scored["away_moneyline"])
+        model_won = (model_pick_home & scored["home_win"].eq(1)) | ((~model_pick_home) & scored["home_win"].eq(0))
+        model_roi = _roi_from_picks(model_won, model_pick_odds)
+
+        market_pick_home = scored["market_home_prob"] >= scored["market_away_prob"]
+        market_pick_odds = scored["home_moneyline"].where(market_pick_home, scored["away_moneyline"])
+        market_won = (market_pick_home & scored["home_win"].eq(1)) | ((~market_pick_home) & scored["home_win"].eq(0))
+        market_roi = _roi_from_picks(market_won, market_pick_odds)
+
+        moneyline_rows.append(
+            {
+                "season": int(season),
+                "train_rows": int(len(train)),
+                "test_rows": int(len(test)),
+                "model_accuracy": float(metrics.get("accuracy", 0.0)),
+                "market_accuracy": market_accuracy,
+                "delta_accuracy": _delta_or_none(float(metrics.get("accuracy", 0.0)), market_accuracy),
+                "model_auc": float(metrics.get("roc_auc")) if "roc_auc" in metrics else None,
+                "market_auc": market_auc,
+                "delta_auc": _delta_or_none(float(metrics.get("roc_auc")) if "roc_auc" in metrics else None, market_auc),
+                "model_brier": float(metrics.get("brier_score", 0.0)),
+                "market_brier": market_brier,
+                "delta_brier": _delta_or_none(float(metrics.get("brier_score", 0.0)), market_brier),
+                "model_roi_per_bet": model_roi,
+                "market_roi_per_bet": market_roi,
+                "delta_roi_per_bet": _delta_or_none(model_roi, market_roi),
+            }
+        )
+
+    totals_rows: list[dict[str, object]] = []
+    totals_seasons = sorted(
+        pd.to_numeric(total_modeling_frame["season"], errors="coerce").dropna().astype(int).unique()
+    )
+    for season in totals_seasons:
+        train = total_modeling_frame[pd.to_numeric(total_modeling_frame["season"], errors="coerce") < season].copy()
+        test = total_modeling_frame[pd.to_numeric(total_modeling_frame["season"], errors="coerce") == season].copy()
+        if train.empty or test.empty:
+            continue
+
+        walk_model = NFLTotalModel()
+        walk_model.fit(train)
+        metrics, scored = evaluate_total_model(walk_model, test)
+
+        model_pick_over = scored["recommended_total_side"].eq("OVER")
+        model_pick_odds = scored["over_odds"].where(model_pick_over, scored["under_odds"])
+        model_won = (model_pick_over & scored["over_hit"].eq(1)) | ((~model_pick_over) & scored["over_hit"].eq(0))
+        model_roi = _roi_from_picks(model_won, model_pick_odds)
+
+        valid_market = scored["market_over_prob"].notna() & scored["market_under_prob"].notna()
+        market_accuracy = None
+        market_auc = None
+        market_brier = None
+        market_roi = None
+        if valid_market.any():
+            y_true = scored.loc[valid_market, "over_hit"].astype(int)
+            market_prob = pd.to_numeric(scored.loc[valid_market, "market_over_prob"], errors="coerce")
+            if not market_prob.empty:
+                market_pred = (market_prob >= 0.5).astype(int)
+                market_accuracy = float((market_pred == y_true).mean())
+                if y_true.nunique() > 1:
+                    try:
+                        from sklearn.metrics import brier_score_loss, roc_auc_score
+
+                        market_auc = float(roc_auc_score(y_true, market_prob))
+                        market_brier = float(brier_score_loss(y_true, market_prob))
+                    except Exception:
+                        market_auc = None
+                        market_brier = None
+
+            market_pick_over = scored.loc[valid_market, "market_over_prob"] >= scored.loc[valid_market, "market_under_prob"]
+            market_pick_odds = scored.loc[valid_market, "over_odds"].where(
+                market_pick_over, scored.loc[valid_market, "under_odds"]
+            )
+            market_won = (market_pick_over & scored.loc[valid_market, "over_hit"].eq(1)) | (
+                (~market_pick_over) & scored.loc[valid_market, "over_hit"].eq(0)
+            )
+            market_roi = _roi_from_picks(market_won, market_pick_odds)
+
+        totals_rows.append(
+            {
+                "season": int(season),
+                "train_rows": int(len(train)),
+                "test_rows": int(len(test)),
+                "market_coverage_rows": int(valid_market.sum()),
+                "model_accuracy": float(metrics.get("accuracy", 0.0)),
+                "market_accuracy": market_accuracy,
+                "delta_accuracy": _delta_or_none(float(metrics.get("accuracy", 0.0)), market_accuracy),
+                "model_auc": float(metrics.get("roc_auc")) if "roc_auc" in metrics else None,
+                "market_auc": market_auc,
+                "delta_auc": _delta_or_none(float(metrics.get("roc_auc")) if "roc_auc" in metrics else None, market_auc),
+                "model_brier": float(metrics.get("brier_score", 0.0)),
+                "market_brier": market_brier,
+                "delta_brier": _delta_or_none(float(metrics.get("brier_score", 0.0)), market_brier),
+                "model_roi_per_bet": model_roi,
+                "market_roi_per_bet": market_roi,
+                "delta_roi_per_bet": _delta_or_none(model_roi, market_roi),
+            }
+        )
+
+    moneyline_summary = {
+        "seasons_evaluated": len(moneyline_rows),
+        "avg_model_accuracy": _mean_or_none([row.get("model_accuracy") for row in moneyline_rows]),
+        "avg_market_accuracy": _mean_or_none([row.get("market_accuracy") for row in moneyline_rows]),
+        "avg_delta_accuracy": _mean_or_none([row.get("delta_accuracy") for row in moneyline_rows]),
+        "avg_model_auc": _mean_or_none([row.get("model_auc") for row in moneyline_rows]),
+        "avg_market_auc": _mean_or_none([row.get("market_auc") for row in moneyline_rows]),
+        "avg_delta_auc": _mean_or_none([row.get("delta_auc") for row in moneyline_rows]),
+        "avg_model_roi_per_bet": _mean_or_none([row.get("model_roi_per_bet") for row in moneyline_rows]),
+        "avg_market_roi_per_bet": _mean_or_none([row.get("market_roi_per_bet") for row in moneyline_rows]),
+        "avg_delta_roi_per_bet": _mean_or_none([row.get("delta_roi_per_bet") for row in moneyline_rows]),
+    }
+    totals_summary = {
+        "seasons_evaluated": len(totals_rows),
+        "avg_model_accuracy": _mean_or_none([row.get("model_accuracy") for row in totals_rows]),
+        "avg_market_accuracy": _mean_or_none([row.get("market_accuracy") for row in totals_rows]),
+        "avg_delta_accuracy": _mean_or_none([row.get("delta_accuracy") for row in totals_rows]),
+        "avg_model_auc": _mean_or_none([row.get("model_auc") for row in totals_rows]),
+        "avg_market_auc": _mean_or_none([row.get("market_auc") for row in totals_rows]),
+        "avg_delta_auc": _mean_or_none([row.get("delta_auc") for row in totals_rows]),
+        "avg_model_roi_per_bet": _mean_or_none([row.get("model_roi_per_bet") for row in totals_rows]),
+        "avg_market_roi_per_bet": _mean_or_none([row.get("market_roi_per_bet") for row in totals_rows]),
+        "avg_delta_roi_per_bet": _mean_or_none([row.get("delta_roi_per_bet") for row in totals_rows]),
+    }
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+    return {
+        "generated_at_utc": now_utc,
+        "moneyline": {"seasons": moneyline_rows, "summary": moneyline_summary},
+        "totals": {"seasons": totals_rows, "summary": totals_summary},
+        "summary": {
+            "moneyline": moneyline_summary,
+            "totals": totals_summary,
+            "notes": [
+                "Walk-forward report tracks accuracy/AUC/Brier/ROI by season.",
+                "Historical CLV is not included because closing-line history is not available in source data.",
+            ],
+        },
+    }
 
 
 def _build_record_summary(frame: pd.DataFrame) -> dict[str, float | int | str | None]:
@@ -1226,6 +1437,8 @@ def run_pipeline(
     }
     calibration_report = build_calibration_report(holdout_scored, holdout_total_scored)
     metrics["calibration"] = calibration_report
+    walkforward_report = build_walkforward_report(modeling_frame, total_modeling_frame)
+    metrics["walkforward_summary"] = walkforward_report.get("summary", {})
 
     final_total_model = NFLTotalModel()
     final_total_model.fit(total_modeling_frame)
@@ -1241,7 +1454,15 @@ def run_pipeline(
             odds_frame = fetch_upcoming_odds_frame(odds_api_key)
             if not odds_frame.empty:
                 team_snapshot, last_game_date = build_team_form_snapshot(games)
-                upcoming_frame = build_external_prediction_frame(odds_frame, team_snapshot, last_game_date)
+                home_environment_snapshot = build_home_environment_snapshot(games)
+                qb_continuity_snapshot = build_qb_continuity_snapshot(games)
+                upcoming_frame = build_external_prediction_frame(
+                    odds_frame,
+                    team_snapshot,
+                    last_game_date,
+                    home_environment_snapshot=home_environment_snapshot,
+                    qb_continuity_snapshot=qb_continuity_snapshot,
+                )
                 upcoming_frame = normalize_categorical_columns(upcoming_frame)
                 upcoming_frame = assign_schedule_week(upcoming_frame, future_schedule)
                 # Keep near-term Odds API rows, but include later scheduled weeks so week selection
@@ -1320,6 +1541,8 @@ def run_pipeline(
         json.dump(metrics, f, indent=2, sort_keys=True)
     with CALIBRATION_REPORT_PATH.open("w", encoding="utf-8") as f:
         json.dump(calibration_report, f, indent=2, sort_keys=True)
+    with WALKFORWARD_REPORT_PATH.open("w", encoding="utf-8") as f:
+        json.dump(walkforward_report, f, indent=2, sort_keys=True)
 
     holdout_scored.to_csv(HOLDOUT_PATH, index=False)
     holdout_total_scored.to_csv(HOLDOUT_TOTAL_PATH, index=False)
@@ -1342,6 +1565,7 @@ def run_pipeline(
         "total_model_path": str(TOTAL_MODEL_PATH),
         "metrics_path": str(METRICS_PATH),
         "calibration_report_path": str(CALIBRATION_REPORT_PATH),
+        "walkforward_report_path": str(WALKFORWARD_REPORT_PATH),
         "holdout_path": str(HOLDOUT_PATH),
         "holdout_total_path": str(HOLDOUT_TOTAL_PATH),
         "upcoming_path": str(UPCOMING_PATH),
@@ -1397,6 +1621,7 @@ def main() -> None:
     print(f"Total model saved to: {result['total_model_path']}")
     print(f"Metrics saved to: {result['metrics_path']}")
     print(f"Calibration report saved to: {result['calibration_report_path']}")
+    print(f"Walk-forward report saved to: {result['walkforward_report_path']}")
     print(f"Holdout results saved to: {result['holdout_path']}")
     print(f"Holdout totals saved to: {result['holdout_total_path']}")
     print(f"Upcoming predictions saved to: {result['upcoming_path']}")

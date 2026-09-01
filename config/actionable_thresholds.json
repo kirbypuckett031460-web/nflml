@@ -1,23 +1,23 @@
 {
   "moneyline": {
-    "min_edge_pct": 2.0,
-    "min_ev_per_dollar": 0.0
+    "min_edge_pct": 3.0,
+    "min_ev_per_dollar": 0.02
   },
   "totals": {
     "overall": {
-      "min_edge_pct": 2.0,
-      "min_ev_per_dollar": 0.0,
-      "min_projected_total_edge": 1.0
+      "min_edge_pct": 3.25,
+      "min_ev_per_dollar": 0.015,
+      "min_projected_total_edge": 1.25
     },
     "over": {
-      "min_edge_pct": 2.0,
-      "min_ev_per_dollar": 0.0,
-      "min_projected_total_edge": 1.0
+      "min_edge_pct": 4.5,
+      "min_ev_per_dollar": 0.02,
+      "min_projected_total_edge": 2.0
     },
     "under": {
       "min_edge_pct": 2.0,
-      "min_ev_per_dollar": 0.0,
-      "min_projected_total_edge": 1.0
+      "min_ev_per_dollar": 0.01,
+      "min_projected_total_edge": 0.5
     }
   }
 }
