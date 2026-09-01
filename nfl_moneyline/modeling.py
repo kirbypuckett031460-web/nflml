@@ -35,7 +35,9 @@ class ModelArtifacts:
 class NFLMoneylineModel:
     """A logistic regression baseline for home-team win probability."""
 
-    def __init__(self) -> None:
+    def __init__(self, independent_mode: bool = False) -> None:
+        self.independent_mode = bool(independent_mode)
+        self.feature_columns = self._resolve_feature_columns()
         self.pipeline = Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="median")),
@@ -44,28 +46,51 @@ class NFLMoneylineModel:
             ]
         )
 
+    def _resolve_feature_columns(self) -> list[str]:
+        if not self.independent_mode:
+            return list(FEATURE_COLUMNS)
+        market_anchor = {"market_home_prob", "home_spread_line"}
+        return [col for col in FEATURE_COLUMNS if col not in market_anchor]
+
     def fit(self, frame: pd.DataFrame) -> None:
-        X = frame[FEATURE_COLUMNS]
+        X = frame[self.feature_columns]
         y = frame["home_win"].astype(int)
         self.pipeline.fit(X, y)
 
     def predict_home_win_prob(self, frame: pd.DataFrame) -> np.ndarray:
-        return self.pipeline.predict_proba(frame[FEATURE_COLUMNS])[:, 1]
+        return self.pipeline.predict_proba(frame[self.feature_columns])[:, 1]
 
     def save(self, model_path: str) -> None:
-        joblib.dump(self.pipeline, model_path)
+        joblib.dump(
+            {
+                "pipeline": self.pipeline,
+                "independent_mode": self.independent_mode,
+                "feature_columns": self.feature_columns,
+            },
+            model_path,
+        )
 
     @classmethod
     def load(cls, model_path: str) -> "NFLMoneylineModel":
         obj = cls()
-        obj.pipeline = joblib.load(model_path)
+        payload = joblib.load(model_path)
+        if isinstance(payload, dict) and "pipeline" in payload:
+            obj.pipeline = payload["pipeline"]
+            obj.independent_mode = bool(payload.get("independent_mode", obj.independent_mode))
+            obj.feature_columns = list(payload.get("feature_columns", obj._resolve_feature_columns()))
+        else:
+            # Backward compatibility with older serialized model payload.
+            obj.pipeline = payload
+            obj.feature_columns = obj._resolve_feature_columns()
         return obj
 
 
 class NFLTotalModel:
     """A regression model for projecting game totals."""
 
-    def __init__(self) -> None:
+    def __init__(self, independent_mode: bool = False) -> None:
+        self.independent_mode = bool(independent_mode)
+        self.feature_columns = self._resolve_feature_columns()
         self.pipeline = Pipeline(
             steps=[
                 ("imputer", SimpleImputer(strategy="median")),
@@ -75,8 +100,14 @@ class NFLTotalModel:
         )
         self.residual_std = 13.5
 
+    def _resolve_feature_columns(self) -> list[str]:
+        if not self.independent_mode:
+            return list(TOTAL_FEATURE_COLUMNS)
+        market_anchor = {"total_line"}
+        return [col for col in TOTAL_FEATURE_COLUMNS if col not in market_anchor]
+
     def fit(self, frame: pd.DataFrame) -> None:
-        X = frame[TOTAL_FEATURE_COLUMNS]
+        X = frame[self.feature_columns]
         y = pd.to_numeric(frame["game_total_points"], errors="coerce")
         valid = y.notna()
         self.pipeline.fit(X.loc[valid], y.loc[valid])
@@ -89,7 +120,7 @@ class NFLTotalModel:
         self.residual_std = std
 
     def predict_total_points(self, frame: pd.DataFrame) -> np.ndarray:
-        return self.pipeline.predict(frame[TOTAL_FEATURE_COLUMNS])
+        return self.pipeline.predict(frame[self.feature_columns])
 
     def _normal_cdf(self, z_values: np.ndarray) -> np.ndarray:
         return np.array(
@@ -111,6 +142,8 @@ class NFLTotalModel:
             {
                 "pipeline": self.pipeline,
                 "residual_std": float(self.residual_std),
+                "independent_mode": self.independent_mode,
+                "feature_columns": self.feature_columns,
             },
             model_path,
         )
@@ -122,9 +155,12 @@ class NFLTotalModel:
         if isinstance(payload, dict) and "pipeline" in payload:
             obj.pipeline = payload["pipeline"]
             obj.residual_std = float(payload.get("residual_std", obj.residual_std))
+            obj.independent_mode = bool(payload.get("independent_mode", obj.independent_mode))
+            obj.feature_columns = list(payload.get("feature_columns", obj._resolve_feature_columns()))
         else:
             # Backward compatibility with older serialized model payload.
             obj.pipeline = payload
+            obj.feature_columns = obj._resolve_feature_columns()
         return obj
 
 

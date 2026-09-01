@@ -53,6 +53,7 @@ PUBLIC_TOTAL_BET_HISTORY_PATH = PUBLISHED_DIR / "bet_history_totals.csv"
 PUBLIC_CLV_MONEYLINE_PATH = PUBLISHED_DIR / "clv_watchlist_moneyline.csv"
 PUBLIC_CLV_TOTALS_PATH = PUBLISHED_DIR / "clv_watchlist_totals.csv"
 ACTIONABLE_THRESHOLDS_PATH = Path("config/actionable_thresholds.json")
+MODEL_STANCE_PATH = Path("config/model_stance.json")
 
 DEFAULT_ACTIONABLE_THRESHOLDS = {
     "moneyline": {
@@ -78,6 +79,11 @@ DEFAULT_ACTIONABLE_THRESHOLDS = {
     },
 }
 
+DEFAULT_MODEL_STANCE = {
+    "moneyline_independent_mode": True,
+    "totals_independent_mode": True,
+}
+
 
 def sanitize_error_message(message: object) -> str:
     text = str(message)
@@ -92,6 +98,20 @@ def _coerce_threshold(value: object, fallback: float) -> float:
     if pd.isna(parsed):
         return float(fallback)
     return float(parsed)
+
+
+def _coerce_bool(value: object, fallback: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return bool(fallback)
+    return bool(value)
 
 
 def normalize_actionable_thresholds(thresholds: dict[str, object] | None) -> dict[str, object]:
@@ -174,6 +194,38 @@ def save_actionable_thresholds(
     path: Path = ACTIONABLE_THRESHOLDS_PATH,
 ) -> dict[str, object]:
     normalized = normalize_actionable_thresholds(thresholds)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    return normalized
+
+
+def normalize_model_stance(stance: dict[str, object] | None) -> dict[str, bool]:
+    source = stance if isinstance(stance, dict) else {}
+    moneyline_value = source.get("moneyline_independent_mode", DEFAULT_MODEL_STANCE["moneyline_independent_mode"])
+    totals_value = source.get("totals_independent_mode", DEFAULT_MODEL_STANCE["totals_independent_mode"])
+    return {
+        "moneyline_independent_mode": _coerce_bool(
+            moneyline_value, DEFAULT_MODEL_STANCE["moneyline_independent_mode"]
+        ),
+        "totals_independent_mode": _coerce_bool(totals_value, DEFAULT_MODEL_STANCE["totals_independent_mode"]),
+    }
+
+
+def load_model_stance(path: Path = MODEL_STANCE_PATH) -> dict[str, bool]:
+    if not path.exists():
+        return normalize_model_stance(None)
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return normalize_model_stance(None)
+    return normalize_model_stance(parsed if isinstance(parsed, dict) else None)
+
+
+def save_model_stance(
+    stance: dict[str, object],
+    path: Path = MODEL_STANCE_PATH,
+) -> dict[str, bool]:
+    normalized = normalize_model_stance(stance)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
     return normalized
@@ -380,8 +432,13 @@ def _roi_from_picks(won_mask: pd.Series, pick_odds: pd.Series) -> float | None:
     return float(valid_outcomes.mean())
 
 
-def build_walkforward_report(modeling_frame: pd.DataFrame, total_modeling_frame: pd.DataFrame) -> dict[str, object]:
+def build_walkforward_report(
+    modeling_frame: pd.DataFrame,
+    total_modeling_frame: pd.DataFrame,
+    model_stance: dict[str, bool] | None = None,
+) -> dict[str, object]:
     """Generate season-by-season walk-forward validation report."""
+    stance = normalize_model_stance(model_stance)
     moneyline_rows: list[dict[str, object]] = []
     moneyline_seasons = sorted(pd.to_numeric(modeling_frame["season"], errors="coerce").dropna().astype(int).unique())
     for season in moneyline_seasons:
@@ -390,7 +447,7 @@ def build_walkforward_report(modeling_frame: pd.DataFrame, total_modeling_frame:
         if train.empty or test.empty:
             continue
 
-        walk_model = NFLMoneylineModel()
+        walk_model = NFLMoneylineModel(independent_mode=stance["moneyline_independent_mode"])
         walk_model.fit(train)
         metrics, scored = evaluate_model(walk_model, test)
 
@@ -453,7 +510,7 @@ def build_walkforward_report(modeling_frame: pd.DataFrame, total_modeling_frame:
         if train.empty or test.empty:
             continue
 
-        walk_model = NFLTotalModel()
+        walk_model = NFLTotalModel(independent_mode=stance["totals_independent_mode"])
         walk_model.fit(train)
         metrics, scored = evaluate_total_model(walk_model, test)
 
@@ -541,6 +598,7 @@ def build_walkforward_report(modeling_frame: pd.DataFrame, total_modeling_frame:
     now_utc = datetime.now(timezone.utc).isoformat()
     return {
         "generated_at_utc": now_utc,
+        "model_stance": stance,
         "moneyline": {"seasons": moneyline_rows, "summary": moneyline_summary},
         "totals": {"seasons": totals_rows, "summary": totals_summary},
         "summary": {
@@ -988,6 +1046,7 @@ def export_public_outputs(
     moneyline_tracking_summary: dict[str, object],
     total_tracking_summary: dict[str, object],
     actionable_thresholds: dict[str, object],
+    model_stance: dict[str, bool],
 ) -> None:
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1365,6 +1424,7 @@ def export_public_outputs(
         "moneyline_bet_tracking": moneyline_tracking_summary,
         "total_bet_tracking": total_tracking_summary,
         "actionable_thresholds": actionable_thresholds,
+        "model_stance": model_stance,
         "actionable_counts": {
             "moneyline": int(moneyline_actionable_mask.fillna(False).sum()),
             "totals": int(totals_actionable_mask.fillna(False).sum()),
@@ -1387,6 +1447,7 @@ def run_pipeline(
     use_odds_api: bool = True,
     allow_odds_fallback: bool = False,
     actionable_thresholds: dict[str, object] | None = None,
+    model_stance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
@@ -1394,6 +1455,11 @@ def run_pipeline(
         normalize_actionable_thresholds(actionable_thresholds)
         if actionable_thresholds is not None
         else load_actionable_thresholds()
+    )
+    resolved_model_stance = (
+        normalize_model_stance(model_stance)
+        if model_stance is not None
+        else load_model_stance()
     )
 
     games = load_games_data()
@@ -1408,19 +1474,21 @@ def run_pipeline(
 
     train_frame, test_frame = split_train_test_by_season(modeling_frame)
 
-    eval_model = NFLMoneylineModel()
+    eval_model = NFLMoneylineModel(independent_mode=resolved_model_stance["moneyline_independent_mode"])
     eval_model.fit(train_frame)
     metrics, holdout_scored = evaluate_model(eval_model, test_frame)
     metrics["train_rows"] = int(len(train_frame))
     metrics["test_rows"] = int(len(test_frame))
     metrics["latest_test_season"] = int(test_frame["season"].max())
+    metrics["model_stance"] = resolved_model_stance
+    metrics["moneyline_features_used"] = eval_model.feature_columns
 
-    final_model = NFLMoneylineModel()
+    final_model = NFLMoneylineModel(independent_mode=resolved_model_stance["moneyline_independent_mode"])
     final_model.fit(modeling_frame)
     final_model.save(str(MODEL_PATH))
 
     total_train, total_test = split_train_test_by_season(total_modeling_frame)
-    total_eval_model = NFLTotalModel()
+    total_eval_model = NFLTotalModel(independent_mode=resolved_model_stance["totals_independent_mode"])
     total_eval_model.fit(total_train)
     total_metrics, holdout_total_scored = evaluate_total_model(total_eval_model, total_test)
     metrics["total_model"] = {
@@ -1434,13 +1502,18 @@ def run_pipeline(
         "train_rows": int(len(total_train)),
         "test_rows": int(len(total_test)),
         "latest_test_season": int(total_test["season"].max()) if not total_test.empty else None,
+        "features_used": total_eval_model.feature_columns,
     }
     calibration_report = build_calibration_report(holdout_scored, holdout_total_scored)
     metrics["calibration"] = calibration_report
-    walkforward_report = build_walkforward_report(modeling_frame, total_modeling_frame)
+    walkforward_report = build_walkforward_report(
+        modeling_frame,
+        total_modeling_frame,
+        model_stance=resolved_model_stance,
+    )
     metrics["walkforward_summary"] = walkforward_report.get("summary", {})
 
-    final_total_model = NFLTotalModel()
+    final_total_model = NFLTotalModel(independent_mode=resolved_model_stance["totals_independent_mode"])
     final_total_model.fit(total_modeling_frame)
     final_total_model.save(str(TOTAL_MODEL_PATH))
 
@@ -1558,6 +1631,7 @@ def run_pipeline(
         moneyline_tracking_summary,
         total_tracking_summary,
         resolved_actionable_thresholds,
+        resolved_model_stance,
     )
 
     return {
@@ -1578,6 +1652,7 @@ def run_pipeline(
         "clv_moneyline_watchlist_path": str(PUBLIC_CLV_MONEYLINE_PATH),
         "clv_totals_watchlist_path": str(PUBLIC_CLV_TOTALS_PATH),
         "actionable_thresholds_path": str(ACTIONABLE_THRESHOLDS_PATH),
+        "model_stance_path": str(MODEL_STANCE_PATH),
         "upcoming_source": upcoming_source,
         "upcoming_rows": int(len(upcoming_scored)),
         "upcoming_totals_rows": int(len(upcoming_totals_scored)),
@@ -1586,6 +1661,7 @@ def run_pipeline(
         "totals_tracking_season": total_tracking_summary.get("tracking_season"),
         "totals_ytd_record": (total_tracking_summary.get("ytd") or {}).get("record", "0-0"),
         "actionable_thresholds": resolved_actionable_thresholds,
+        "model_stance": resolved_model_stance,
     }
 
 
@@ -1634,6 +1710,7 @@ def main() -> None:
     print(f"CLV moneyline watchlist saved to: {result['clv_moneyline_watchlist_path']}")
     print(f"CLV totals watchlist saved to: {result['clv_totals_watchlist_path']}")
     print(f"Actionable thresholds path: {result['actionable_thresholds_path']}")
+    print(f"Model stance path: {result['model_stance_path']}")
     print(f"Upcoming source: {result['upcoming_source']}")
     print(f"Upcoming rows: {result['upcoming_rows']}")
     print(f"Upcoming totals rows: {result['upcoming_totals_rows']}")
@@ -1642,6 +1719,7 @@ def main() -> None:
     print(f"Totals tracking season: {result['totals_tracking_season']}")
     print(f"Totals YTD record: {result['totals_ytd_record']}")
     print(f"Actionable thresholds used: {json.dumps(result['actionable_thresholds'], sort_keys=True)}")
+    print(f"Model stance used: {json.dumps(result['model_stance'], sort_keys=True)}")
 
 
 if __name__ == "__main__":

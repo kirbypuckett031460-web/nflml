@@ -14,9 +14,12 @@ import streamlit as st
 
 from train_model import (
     ACTIONABLE_THRESHOLDS_PATH,
+    MODEL_STANCE_PATH,
     load_actionable_thresholds,
+    load_model_stance,
     run_pipeline,
     save_actionable_thresholds,
+    save_model_stance,
 )
 
 ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS = {
@@ -26,6 +29,11 @@ ADMIN_DEFAULT_ACTIONABLE_THRESHOLDS = {
         "over": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
         "under": {"min_edge_pct": 2.0, "min_ev_per_dollar": 0.0, "min_projected_total_edge": 1.0},
     },
+}
+
+ADMIN_DEFAULT_MODEL_STANCE = {
+    "moneyline_independent_mode": True,
+    "totals_independent_mode": True,
 }
 
 ARTIFACT_DIR = Path("artifacts")
@@ -65,6 +73,20 @@ def _coerce_threshold(value: object, fallback: float) -> float:
     if pd.isna(parsed):
         return float(fallback)
     return float(parsed)
+
+
+def _coerce_bool(value: object, fallback: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return bool(fallback)
+    return bool(value)
 
 
 def normalize_admin_actionable_thresholds(thresholds: dict[str, object] | None) -> dict[str, object]:
@@ -129,11 +151,30 @@ def normalize_admin_actionable_thresholds(thresholds: dict[str, object] | None) 
     }
 
 
+def normalize_admin_model_stance(stance: dict[str, object] | None) -> dict[str, bool]:
+    raw = stance if isinstance(stance, dict) else {}
+    return {
+        "moneyline_independent_mode": _coerce_bool(
+            raw.get("moneyline_independent_mode"),
+            ADMIN_DEFAULT_MODEL_STANCE["moneyline_independent_mode"],
+        ),
+        "totals_independent_mode": _coerce_bool(
+            raw.get("totals_independent_mode"),
+            ADMIN_DEFAULT_MODEL_STANCE["totals_independent_mode"],
+        ),
+    }
+
+
 try:
     _loaded_actionable_thresholds = load_actionable_thresholds()
 except Exception:
     _loaded_actionable_thresholds = {}
 configured_actionable_thresholds = normalize_admin_actionable_thresholds(_loaded_actionable_thresholds)
+try:
+    _loaded_model_stance = load_model_stance()
+except Exception:
+    _loaded_model_stance = {}
+configured_model_stance = normalize_admin_model_stance(_loaded_model_stance)
 
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
@@ -189,7 +230,9 @@ with st.expander("Configuration status", expanded=True):
     st.write(f"GITHUB_WORKFLOW_FILE: {github_workflow}")
     st.write(f"GITHUB_REF: {github_ref}")
     st.write(f"Actionable thresholds config path: {ACTIONABLE_THRESHOLDS_PATH}")
+    st.write(f"Model stance config path: {MODEL_STANCE_PATH}")
     st.json(configured_actionable_thresholds)
+    st.json({"model_stance": configured_model_stance})
 
 
 def load_json(path: Path) -> dict:
@@ -310,6 +353,24 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Run model now")
     st.caption("Edit actionable thresholds used for Top Plays filtering.")
+    st.markdown("**Model stance**")
+    moneyline_independent_mode = st.checkbox(
+        "Moneyline independent mode (remove market probability/spread from training)",
+        value=bool(configured_model_stance["moneyline_independent_mode"]),
+    )
+    totals_independent_mode = st.checkbox(
+        "Totals independent mode (remove total line from training)",
+        value=bool(configured_model_stance["totals_independent_mode"]),
+    )
+    selected_model_stance = {
+        "moneyline_independent_mode": bool(moneyline_independent_mode),
+        "totals_independent_mode": bool(totals_independent_mode),
+    }
+    if st.button("Save model stance"):
+        saved_stance = save_model_stance(selected_model_stance)
+        st.success(f"Saved to {MODEL_STANCE_PATH}")
+        st.json(saved_stance)
+
     ml_col1, ml_col2 = st.columns(2)
     ml_min_edge = ml_col1.number_input(
         "Moneyline min edge (%)",
@@ -445,11 +506,13 @@ with col1:
                     use_odds_api=True,
                     allow_odds_fallback=allow_odds_fallback,
                     actionable_thresholds=selected_actionable_thresholds,
+                    model_stance=selected_model_stance,
                 )
             st.success(
                 f"Done. Source: {result['upcoming_source']}. "
                 f"Upcoming games scored: {result['upcoming_rows']}. "
-                f"Thresholds: {json.dumps(result['actionable_thresholds'])}"
+                f"Thresholds: {json.dumps(result['actionable_thresholds'])}. "
+                f"Stance: {json.dumps(result['model_stance'])}"
             )
         except Exception as exc:
             st.error(
@@ -496,6 +559,10 @@ if metrics:
         f"Test rows: {metrics.get('test_rows', 0):,} | "
         f"Upcoming source: {metrics.get('upcoming_source', 'n/a')}"
     )
+    if "model_stance" in metrics:
+        st.caption(f"Model stance: {json.dumps(metrics.get('model_stance', {}), sort_keys=True)}")
+    if "moneyline_features_used" in metrics:
+        st.caption(f"Moneyline features used: {', '.join(metrics.get('moneyline_features_used', []))}")
     if "total_model" in metrics and isinstance(metrics["total_model"], dict):
         total_m = metrics["total_model"]
         st.caption(
@@ -507,6 +574,8 @@ if metrics:
             f"Train rows: {int(total_m.get('train_rows', 0)):,} | "
             f"Test rows: {int(total_m.get('test_rows', 0)):,}"
         )
+        if isinstance(total_m.get("features_used"), list):
+            st.caption(f"Totals features used: {', '.join(total_m.get('features_used', []))}")
     calibration = metrics.get("calibration", calibration_report)
     if isinstance(calibration, dict):
         st.subheader("Calibration snapshot (holdout)")
