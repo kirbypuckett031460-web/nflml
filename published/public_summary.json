@@ -1,9 +1,9 @@
 {
   "actionable_counts": {
-    "moneyline": 47,
-    "totals": 18,
-    "totals_over": 10,
-    "totals_under": 8
+    "moneyline": 95,
+    "totals": 84,
+    "totals_over": 24,
+    "totals_under": 60
   },
   "actionable_thresholds": {
     "moneyline": {
@@ -34,9 +34,13 @@
     "totals_path": "published/clv_watchlist_totals.csv",
     "totals_rows": 112
   },
-  "holdout_accuracy": 0.6544117647058824,
-  "holdout_brier_score": 0.21217694229765988,
-  "holdout_roc_auc": 0.7143400739291149,
+  "holdout_accuracy": 0.6360294117647058,
+  "holdout_brier_score": 0.21649091871015488,
+  "holdout_roc_auc": 0.7062404870624047,
+  "model_stance": {
+    "moneyline_independent_mode": true,
+    "totals_independent_mode": true
+  },
   "moneyline_bet_tracking": {
     "latest_graded_week": null,
     "previous_week": {
@@ -86,6 +90,6 @@
     }
   },
   "upcoming_source": "odds_api",
-  "updated_at_et": "2026-09-01T12:39:25.171727-04:00",
-  "updated_at_utc": "2026-09-01T16:39:25.171727+00:00"
+  "updated_at_et": "2026-09-01T12:56:27.829593-04:00",
+  "updated_at_utc": "2026-09-01T16:56:27.829593+00:00"
 }
