@@ -3,8 +3,11 @@
 from .data import load_games_data
 from .features import (
     build_external_prediction_frame,
+    build_feature_frame,
+    build_home_environment_snapshot,
     build_modeling_frame,
     build_prediction_frame,
+    build_qb_continuity_snapshot,
     build_team_form_snapshot,
     build_total_modeling_frame,
 )
@@ -15,8 +18,11 @@ __all__ = [
     "NFLMoneylineModel",
     "NFLTotalModel",
     "build_external_prediction_frame",
+    "build_feature_frame",
+    "build_home_environment_snapshot",
     "build_modeling_frame",
     "build_prediction_frame",
+    "build_qb_continuity_snapshot",
     "build_team_form_snapshot",
     "build_total_modeling_frame",
     "evaluate_model",

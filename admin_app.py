@@ -32,6 +32,7 @@ ARTIFACT_DIR = Path("artifacts")
 PUBLISHED_DIR = Path("published")
 METRICS_PATH = ARTIFACT_DIR / "metrics.json"
 CALIBRATION_REPORT_PATH = ARTIFACT_DIR / "calibration_report.json"
+WALKFORWARD_REPORT_PATH = ARTIFACT_DIR / "walkforward_report.json"
 HOLDOUT_PATH = ARTIFACT_DIR / "holdout_scored_games.csv"
 HOLDOUT_TOTAL_PATH = ARTIFACT_DIR / "holdout_totals_scored_games.csv"
 UPCOMING_PATH = ARTIFACT_DIR / "upcoming_predictions.csv"
@@ -470,6 +471,7 @@ st.divider()
 
 metrics = load_json(METRICS_PATH)
 calibration_report = load_json(CALIBRATION_REPORT_PATH)
+walkforward_report = load_json(WALKFORWARD_REPORT_PATH)
 public_summary = load_json(PUBLIC_SUMMARY_PATH)
 upcoming = load_csv(UPCOMING_PATH)
 upcoming_totals = load_csv(UPCOMING_TOTALS_PATH)
@@ -520,6 +522,23 @@ if metrics:
             st.dataframe(pd.DataFrame(cal_ml.get("bins", [])), use_container_width=True, hide_index=True)
             st.write("Totals bins")
             st.dataframe(pd.DataFrame(cal_tot.get("bins", [])), use_container_width=True, hide_index=True)
+
+    walkforward = metrics.get("walkforward_summary", {})
+    if not walkforward and walkforward_report:
+        walkforward = walkforward_report.get("summary", {})
+    if walkforward:
+        st.subheader("Walk-forward backtest summary")
+        st.json(walkforward)
+
+if walkforward_report:
+    moneyline_wf = pd.DataFrame(((walkforward_report.get("moneyline") or {}).get("seasons") or []))
+    totals_wf = pd.DataFrame(((walkforward_report.get("totals") or {}).get("seasons") or []))
+    if not moneyline_wf.empty:
+        st.subheader("Walk-forward moneyline by season")
+        st.dataframe(moneyline_wf, use_container_width=True, hide_index=True)
+    if not totals_wf.empty:
+        st.subheader("Walk-forward totals by season")
+        st.dataframe(totals_wf, use_container_width=True, hide_index=True)
 
 if public_summary:
     st.subheader("Public feed status")
