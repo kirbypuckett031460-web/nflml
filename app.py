@@ -666,14 +666,23 @@ summary = load_summary()
 moneyline_picks = load_csv(PUBLIC_PICKS_PATH)
 totals_picks = load_csv(PUBLIC_TOTALS_PATH)
 actionable_thresholds = get_actionable_thresholds(summary)
+if "last_public_reload_et" not in st.session_state:
+    st.session_state["last_public_reload_et"] = None
 
 header_col, refresh_col = st.columns([6, 1])
 with header_col:
     st.markdown("<div class='title-row'><h1>NFL Betting Picks Board</h1></div>", unsafe_allow_html=True)
 with refresh_col:
-    if st.button("Refresh"):
-        st.cache_data.clear()
+    if st.button("Reload latest published data"):
+        st.session_state["last_public_reload_et"] = format_last_updated_et(
+            pd.Timestamp.now(tz="America/New_York")
+        )
         st.rerun()
+if st.session_state["last_public_reload_et"]:
+    st.markdown(
+        f"<div class='muted'>Reloaded latest published data at: {st.session_state['last_public_reload_et']}</div>",
+        unsafe_allow_html=True,
+    )
 
 if moneyline_picks.empty and totals_picks.empty:
     st.info("No published predictions found yet.")
