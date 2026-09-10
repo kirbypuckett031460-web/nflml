@@ -179,6 +179,24 @@ def split_train_test_by_season(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     return train, test
 
 
+def _safe_binary_log_loss(y_true: pd.Series, y_prob: pd.Series) -> float:
+    """Compute stable binary log loss even when one class is absent."""
+    y_series = pd.to_numeric(y_true, errors="coerce")
+    prob_series = pd.to_numeric(y_prob, errors="coerce")
+    valid = y_series.isin([0, 1]) & prob_series.notna()
+    if not valid.any():
+        return 0.0
+
+    y_values = y_series.loc[valid].astype(float).to_numpy()
+    probs = np.clip(prob_series.loc[valid].astype(float).to_numpy(), 1e-15, 1.0 - 1e-15)
+    try:
+        # Explicit labels avoids sklearn failure when y_true has one class.
+        return float(log_loss(y_values, probs, labels=[0, 1]))
+    except ValueError:
+        # Fallback is mathematically equivalent for binary outcomes.
+        return float(-np.mean((y_values * np.log(probs)) + ((1.0 - y_values) * np.log(1.0 - probs))))
+
+
 def evaluate_model(model: NFLMoneylineModel, test_frame: pd.DataFrame) -> tuple[dict[str, float], pd.DataFrame]:
     """Evaluate the model and return metrics with a scored dataframe."""
     scored = test_frame.copy()
@@ -192,7 +210,7 @@ def evaluate_model(model: NFLMoneylineModel, test_frame: pd.DataFrame) -> tuple[
     metrics: dict[str, float] = {
         "accuracy": float(accuracy_score(y_true, y_hat)),
         "brier_score": float(brier_score_loss(y_true, y_prob)),
-        "log_loss": float(log_loss(y_true, y_prob)),
+        "log_loss": _safe_binary_log_loss(y_true, y_prob),
     }
 
     if y_true.nunique() > 1:
@@ -228,7 +246,7 @@ def evaluate_total_model(model: NFLTotalModel, test_frame: pd.DataFrame) -> tupl
     metrics: dict[str, float] = {
         "accuracy": float(accuracy_score(y_true, y_hat)),
         "brier_score": float(brier_score_loss(y_true, y_prob)),
-        "log_loss": float(log_loss(y_true, y_prob)),
+        "log_loss": _safe_binary_log_loss(y_true, y_prob),
     }
     if y_true.nunique() > 1:
         metrics["roc_auc"] = float(roc_auc_score(y_true, y_prob))
