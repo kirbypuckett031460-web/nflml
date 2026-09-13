@@ -1,9 +1,9 @@
 {
   "actionable_counts": {
-    "moneyline": 87,
-    "totals": 77,
-    "totals_over": 17,
-    "totals_under": 60
+    "moneyline": 5,
+    "totals": 5,
+    "totals_over": 1,
+    "totals_under": 4
   },
   "actionable_thresholds": {
     "moneyline": {
@@ -30,13 +30,13 @@
   },
   "clv_watchlists": {
     "moneyline_path": "published/clv_watchlist_moneyline.csv",
-    "moneyline_rows": 101,
+    "moneyline_rows": 6,
     "totals_path": "published/clv_watchlist_totals.csv",
-    "totals_rows": 101
+    "totals_rows": 6
   },
-  "holdout_accuracy": 0.5,
-  "holdout_brier_score": 0.24510957773075115,
-  "holdout_roc_auc": 1.0,
+  "holdout_accuracy": 0.7,
+  "holdout_brier_score": 0.22443842896950258,
+  "holdout_roc_auc": 0.76,
   "model_stance": {
     "moneyline_independent_mode": true,
     "totals_independent_mode": true
@@ -44,72 +44,72 @@
   "moneyline_bet_tracking": {
     "latest_graded_week": 1,
     "previous_week": {
-      "graded_bets": 2,
-      "losses": 1,
+      "graded_bets": 10,
+      "losses": 6,
       "pushes": 0,
-      "record": "1-1",
-      "win_pct": 0.5,
-      "wins": 1
+      "record": "4-6",
+      "win_pct": 0.4,
+      "wins": 4
     },
     "previous_week_number": 1,
     "prior_week_number": null,
     "tracking_season": 2026,
     "weekly_records": [
       {
-        "graded_bets": 2,
-        "losses": 1,
+        "graded_bets": 10,
+        "losses": 6,
         "pushes": 0,
-        "record": "1-1",
+        "record": "4-6",
         "week": 1,
-        "win_pct": 0.5,
-        "wins": 1
+        "win_pct": 0.4,
+        "wins": 4
       }
     ],
     "ytd": {
-      "graded_bets": 2,
-      "losses": 1,
+      "graded_bets": 10,
+      "losses": 6,
       "pushes": 0,
-      "record": "1-1",
-      "win_pct": 0.5,
-      "wins": 1
+      "record": "4-6",
+      "win_pct": 0.4,
+      "wins": 4
     }
   },
-  "num_upcoming_games": 101,
-  "num_upcoming_totals_games": 101,
+  "num_upcoming_games": 6,
+  "num_upcoming_totals_games": 6,
   "total_bet_tracking": {
     "latest_graded_week": 1,
     "previous_week": {
-      "graded_bets": 2,
-      "losses": 2,
+      "graded_bets": 10,
+      "losses": 6,
       "pushes": 0,
-      "record": "0-2",
-      "win_pct": 0.0,
-      "wins": 0
+      "record": "4-6",
+      "win_pct": 0.4,
+      "wins": 4
     },
     "previous_week_number": 1,
     "prior_week_number": null,
     "tracking_season": 2026,
     "weekly_records": [
       {
-        "graded_bets": 2,
-        "losses": 2,
+        "graded_bets": 10,
+        "losses": 6,
         "pushes": 0,
-        "record": "0-2",
+        "record": "4-6",
         "week": 1,
-        "win_pct": 0.0,
-        "wins": 0
+        "win_pct": 0.4,
+        "wins": 4
       }
     ],
     "ytd": {
-      "graded_bets": 2,
-      "losses": 2,
+      "graded_bets": 10,
+      "losses": 6,
       "pushes": 0,
-      "record": "0-2",
-      "win_pct": 0.0,
-      "wins": 0
+      "record": "4-6",
+      "win_pct": 0.4,
+      "wins": 4
     }
   },
   "upcoming_source": "odds_api",
-  "updated_at_et": "2026-09-11T08:23:05.687668-04:00",
-  "updated_at_utc": "2026-09-11T12:23:05.687668+00:00"
+  "updated_at_et": "2026-09-13T17:47:07.769233-04:00",
+  "updated_at_utc": "2026-09-13T21:47:07.769233+00:00"
 }
