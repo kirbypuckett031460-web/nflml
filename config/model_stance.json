@@ -1,4 +1,4 @@
 {
-  "moneyline_independent_mode": true,
-  "totals_independent_mode": true
+  "moneyline_independent_mode": false,
+  "totals_independent_mode": false
 }
