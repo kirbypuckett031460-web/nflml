@@ -1,6 +1,6 @@
 {
   "actionable_counts": {
-    "moneyline": 16,
+    "moneyline": 13,
     "totals": 11,
     "totals_over": 5,
     "totals_under": 6
@@ -109,7 +109,7 @@
       "wins": 6
     }
   },
-  "upcoming_source": "nflverse",
-  "updated_at_et": "2026-09-15T09:37:05.325728-04:00",
-  "updated_at_utc": "2026-09-15T13:37:05.325728+00:00"
+  "upcoming_source": "odds_api",
+  "updated_at_et": "2026-09-15T09:29:49.769817-04:00",
+  "updated_at_utc": "2026-09-15T13:29:49.769817+00:00"
 }
