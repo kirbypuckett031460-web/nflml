@@ -1,56 +1,115 @@
 {
-  "holdout_accuracy": 0.6544117647058824,
-  "holdout_brier_score": 0.21175537029175226,
-  "holdout_roc_auc": 0.7167862578821482,
-  "moneyline_bet_tracking": {
-    "latest_graded_week": null,
-    "previous_week": {
-      "graded_bets": 0,
-      "losses": 0,
-      "pushes": 0,
-      "record": "0-0",
-      "win_pct": 0.0,
-      "wins": 0
+  "actionable_counts": {
+    "moneyline": 16,
+    "totals": 11,
+    "totals_over": 5,
+    "totals_under": 6
+  },
+  "actionable_thresholds": {
+    "moneyline": {
+      "min_edge_pct": 3.0,
+      "min_ev_per_dollar": 0.02
     },
-    "previous_week_number": null,
-    "prior_week_number": null,
-    "tracking_season": 2026,
-    "weekly_records": [],
-    "ytd": {
-      "graded_bets": 0,
-      "losses": 0,
-      "pushes": 0,
-      "record": "0-0",
-      "win_pct": 0.0,
-      "wins": 0
+    "totals": {
+      "over": {
+        "min_edge_pct": 4.5,
+        "min_ev_per_dollar": 0.02,
+        "min_projected_total_edge": 2.0
+      },
+      "overall": {
+        "min_edge_pct": 3.25,
+        "min_ev_per_dollar": 0.015,
+        "min_projected_total_edge": 1.25
+      },
+      "under": {
+        "min_edge_pct": 2.0,
+        "min_ev_per_dollar": 0.01,
+        "min_projected_total_edge": 0.5
+      }
     }
   },
-  "num_upcoming_games": 112,
-  "num_upcoming_totals_games": 112,
-  "total_bet_tracking": {
-    "latest_graded_week": null,
+  "clv_watchlists": {
+    "moneyline_path": "published/clv_watchlist_moneyline.csv",
+    "moneyline_rows": 16,
+    "totals_path": "published/clv_watchlist_totals.csv",
+    "totals_rows": 16
+  },
+  "holdout_accuracy": 0.625,
+  "holdout_brier_score": 0.24582891179871605,
+  "holdout_roc_auc": 0.55,
+  "model_stance": {
+    "moneyline_independent_mode": true,
+    "totals_independent_mode": true
+  },
+  "moneyline_bet_tracking": {
+    "latest_graded_week": 1,
     "previous_week": {
-      "graded_bets": 0,
-      "losses": 0,
+      "graded_bets": 16,
+      "losses": 9,
       "pushes": 0,
-      "record": "0-0",
-      "win_pct": 0.0,
-      "wins": 0
+      "record": "7-9",
+      "win_pct": 0.4375,
+      "wins": 7
     },
-    "previous_week_number": null,
+    "previous_week_number": 1,
     "prior_week_number": null,
     "tracking_season": 2026,
-    "weekly_records": [],
+    "weekly_records": [
+      {
+        "graded_bets": 16,
+        "losses": 9,
+        "pushes": 0,
+        "record": "7-9",
+        "week": 1,
+        "win_pct": 0.4375,
+        "wins": 7
+      }
+    ],
     "ytd": {
-      "graded_bets": 0,
-      "losses": 0,
+      "graded_bets": 16,
+      "losses": 9,
       "pushes": 0,
-      "record": "0-0",
-      "win_pct": 0.0,
-      "wins": 0
+      "record": "7-9",
+      "win_pct": 0.4375,
+      "wins": 7
+    }
+  },
+  "num_upcoming_games": 16,
+  "num_upcoming_totals_games": 16,
+  "total_bet_tracking": {
+    "latest_graded_week": 1,
+    "previous_week": {
+      "graded_bets": 16,
+      "losses": 10,
+      "pushes": 0,
+      "record": "6-10",
+      "win_pct": 0.375,
+      "wins": 6
+    },
+    "previous_week_number": 1,
+    "prior_week_number": null,
+    "tracking_season": 2026,
+    "weekly_records": [
+      {
+        "graded_bets": 16,
+        "losses": 10,
+        "pushes": 0,
+        "record": "6-10",
+        "week": 1,
+        "win_pct": 0.375,
+        "wins": 6
+      }
+    ],
+    "ytd": {
+      "graded_bets": 16,
+      "losses": 10,
+      "pushes": 0,
+      "record": "6-10",
+      "win_pct": 0.375,
+      "wins": 6
     }
   },
   "upcoming_source": "nflverse",
-  "updated_at_et": "2026-08-19T13:08:01.499753-04:00",
-  "updated_at_utc": "2026-08-19T17:08:01.499753+00:00"
+  "updated_at_et": "2026-09-15T09:37:05.325728-04:00",
+  "updated_at_utc": "2026-09-15T13:37:05.325728+00:00"
 }
